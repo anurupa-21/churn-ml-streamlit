@@ -116,14 +116,17 @@ AUC for the SVM is computed from its `decision_function` scores; all other model
 
 ## Streamlit app
 
+Live app: https://anurupa-churnscope.streamlit.app
+
 Features (all required features plus extras):
 
-- **CSV upload** of test data (or a one-click option to use the bundled `test_data.csv`, plus a download button for it)
-- **Model selection dropdown** for the five classifiers, showing each model's tuned hyper-parameters
-- **Evaluation metrics** – Accuracy, AUC, Precision, Recall, F1 and MCC as metric cards
-- **Confusion matrix** (counts and row percentages) and **classification report**, plus a ROC curve
-- **Compare all models** tab – metric table with best values highlighted, bar chart for any chosen metric, overlaid ROC curves
-- **Predictions** tab – row-level predictions with filters (misclassified only, predicted churners) and CSV download
+- **CSV upload** of test data, or a one-click option to use the bundled `test_data.csv`, plus a download button for the sample file
+- **Model selection dropdown** for the five classifiers, with a short description and the tuned hyper-parameters of each model
+- **Evaluation metrics** – Accuracy, AUC, Precision, Recall, F1 and MCC, each shown as a meter with a five-bar "signal strength" indicator
+- **Confusion matrix** (counts and row percentages) and **classification report**, plus a score-distribution chart, ROC curve and precision–recall curve
+- **Leaderboard** tab – all five models ranked by MCC, a radar chart comparing them across the six metrics, a bar chart for any chosen metric, and overlaid ROC curves
+- **Customer predictions** tab – row-level predictions with filters (wrong predictions only, flagged churners) and CSV download
+- All charts are interactive (Plotly); the app uses a custom navy-and-teal theme
 
 The uploaded CSV must contain the 20 input columns listed above and the `churn` column. The app loads the saved pipelines from `model/` and **never retrains** on uploaded data.
 
