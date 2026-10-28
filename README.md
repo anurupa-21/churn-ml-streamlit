@@ -5,8 +5,8 @@ Anurupa Roy · 2026AK05079
 
 | | |
 |---|---|
-| GitHub repository | `https://github.com/<your-username>/churn-ml-streamlit` |
-| Live Streamlit app | `https://<your-app-name>.streamlit.app` |
+| GitHub repository | https://github.com/anurupa-21/churn-ml-streamlit |
+| Live Streamlit app | https://anurupa-churnscope.streamlit.app |
 
 ---
 
@@ -52,7 +52,7 @@ Because only ~14% of customers churn, accuracy alone is misleading (a model that
 
 ## c. GitHub repository link
 
-`https://github.com/<your-username>/churn-ml-streamlit`
+https://github.com/anurupa-21/churn-ml-streamlit
 
 ```
 churn-ml-streamlit/
