@@ -15,7 +15,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from matplotlib.colors import LinearSegmentedColormap
 import streamlit as st
-from sklearn.metrics import classification_report, confusion_matrix, roc_curve
+from sklearn.metrics import classification_report, confusion_matrix, precision_recall_curve, roc_curve
 
 from src.evaluation import METRIC_NAMES, compute_metrics
 from src.features import RAW_FEATURES, TARGET_COL, validate_input_frame
@@ -70,7 +70,7 @@ st.set_page_config(
     page_title="ChurnScope | Telecom Churn Classifiers",
     page_icon="📡",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 CSS = """
@@ -103,18 +103,66 @@ html, body, .stApp, .stMarkdown, button, input, select, textarea, label, p, li {
   background-attachment: fixed;
 }
 .block-container { padding-top: 1.4rem; padding-bottom: 4rem; max-width: 1280px; }
-[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
 [data-testid="stAppDeployButton"], [data-testid="stDecoration"] { display: none !important; }
+
+/* ---------- dark sidebar ---------- */
+section[data-testid="stSidebar"] {
+  background:
+    radial-gradient(420px 300px at 0% 0%, rgba(168,85,247,0.35), transparent 60%),
+    radial-gradient(420px 320px at 100% 100%, rgba(236,72,153,0.22), transparent 60%),
+    #150D2B;
+  border-right: 1px solid rgba(168,85,247,0.25);
+}
+section[data-testid="stSidebar"] * { color: #E9E4FB; }
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] input,
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] div,
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] svg {
+  color: #1E1537 !important; fill: #6D28D9 !important; -webkit-text-fill-color: #1E1537 !important; font-weight: 600;
+}
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p { color: #FFFFFF !important; font-weight: 600; }
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+  background: rgba(255,255,255,0.06); border: 1.5px dashed rgba(236,72,153,0.6); border-radius: 14px;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button { color: #1E1537 !important; }
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button * { color: #1E1537 !important; }
+section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.12); }
+.sb-brand { display: flex; align-items: center; gap: .7rem; margin: .2rem 0 1.2rem; }
+.sb-logo { width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; background: var(--grad);
+  box-shadow: 0 10px 26px -8px rgba(236,72,153,0.8); }
+.sb-name { font-size: 1.35rem; font-weight: 800; color: #fff; line-height: 1; letter-spacing: -0.02em; }
+.sb-sub { font-size: .78rem; color: #B9AEDB !important; margin-top: .2rem; }
+.sb-step { display: flex; align-items: center; gap: .55rem; margin: 1.1rem 0 .35rem; font-weight: 600; color: #fff; font-size: .95rem; }
+.sb-step b { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; font-size: .8rem;
+  background: rgba(168,85,247,0.35); border: 1px solid rgba(216,180,254,0.5); }
+.sb-card { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px;
+  padding: .75rem .85rem; font-size: .82rem; line-height: 1.5; color: #DCD3F5 !important; margin-top: .4rem; }
+.sb-chip { display: inline-block; margin: .3rem .3rem 0 0; padding: .15rem .55rem; border-radius: 999px; font-size: .72rem;
+  background: rgba(236,72,153,0.16); border: 1px solid rgba(244,114,182,0.4); }
+.sb-key { display: grid; gap: .35rem; margin-top: .3rem; }
+.sb-key div { display: flex; align-items: center; gap: .55rem; font-size: .84rem; }
+.sb-key i { width: 22px; height: 6px; border-radius: 999px; display: inline-block; }
+.sb-foot { font-size: .74rem; color: #9E93C4 !important; margin-top: 1.4rem; line-height: 1.5; }
+
+/* chart reading guides and colour keys */
+.read { display: flex; gap: .6rem; align-items: flex-start; background: #FFFFFF; border: 1px solid var(--line);
+  border-left: 4px solid #C084FC; border-radius: 12px; padding: .65rem .85rem; margin: -.3rem 0 1rem;
+  color: var(--body); font-size: .84rem; line-height: 1.5; }
+.read b { color: var(--ink); }
+.read .ic { font-size: 1rem; line-height: 1.3; }
+.key { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; align-items: center; margin: .7rem 0 0; font-size: .8rem; color: var(--body); }
+.key span { display: inline-flex; align-items: center; gap: .45rem; }
+.key i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; }
 header[data-testid="stHeader"] { background: transparent; }
 
 /* ---------- dark command deck: hero + controls ---------- */
 .hero-wrap {
-  position: relative; border-radius: 28px 28px 0 0; padding: 1.5px 1.5px 0 1.5px;
+  position: relative; border-radius: 28px; padding: 1.5px; margin-bottom: .4rem;
+  box-shadow: 0 30px 70px -34px rgba(91,33,182,0.6);
   background: conic-gradient(from var(--spin), #A855F7, #EC4899, #F59E0B, #A855F7 50%, rgba(168,85,247,0.2) 75%, #A855F7);
   animation: spin 9s linear infinite;
 }
 .hero {
-  position: relative; overflow: hidden; border-radius: 27px 27px 0 0; padding: 2.2rem 2.4rem 1.8rem;
+  position: relative; overflow: hidden; border-radius: 27px; padding: 2.2rem 2.4rem;
   background:
     radial-gradient(620px 320px at 0% 0%, rgba(168,85,247,0.40), transparent 65%),
     radial-gradient(520px 320px at 100% 100%, rgba(236,72,153,0.30), transparent 60%),
@@ -303,6 +351,11 @@ def ring(value: float, size: int = 96, stroke: int = 9, uid: str = "r") -> str:
     </svg>"""
 
 
+def explain(text: str) -> None:
+    """Plain-language guide under a chart so a first-time viewer can read it."""
+    html(f'<div class="read"><span class="ic">💡</span><div>{text}</div></div>')
+
+
 def section(title: str, note: str = "") -> None:
     html(f'<div class="sec"><div class="tt">{title}</div><div class="nt">{note}</div></div>')
 
@@ -394,12 +447,13 @@ def gains_fig(y_true, score, name):
     at20 = y[int(round(0.2 * len(order)))]
     color = MODEL_COLORS[name]
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Contacting at random",
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Random contact (baseline)",
                              line=dict(color="#B7AECF", dash="dot", width=1.5), hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=x, y=y, mode="lines", fill="tonexty", fillcolor=hex_rgba(color, 0.16),
                              line=dict(width=0), hoverinfo="skip", showlegend=False))
-    glow_line(fig, x, y, color, name, hover="Contact top %{x:.0%}<br>Reach %{y:.0%} of churners<extra></extra>")
-    fig.add_trace(go.Scatter(x=[0.2], y=[at20], mode="markers", showlegend=False, hoverinfo="skip",
+    glow_line(fig, x, y, color, f"{name} (contact riskiest first)",
+              hover="Contact top %{x:.0%}<br>Reach %{y:.0%} of churners<extra></extra>")
+    fig.add_trace(go.Scatter(x=[0.2], y=[at20], mode="markers", name="Top 20% point", hoverinfo="skip",
                              marker=dict(size=13, color=FUCHSIA, line=dict(color="#fff", width=2))))
     fig.add_annotation(x=0.2, y=at20, ax=80, ay=46, text=f"<b>Top 20%</b> → {at20:.0%} of churners",
                        showarrow=True, arrowcolor="#F9A8D4", font=dict(size=12, color="#fff"),
@@ -411,7 +465,7 @@ def gains_fig(y_true, score, name):
 
 def roc_fig(curves: dict, selected: str, height=400):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Random",
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Random guess (AUC 0.5)",
                              line=dict(color="#B7AECF", dash="dot", width=1.5), hoverinfo="skip"))
     for name, (fpr, tpr, auc) in curves.items():
         main = name == selected
@@ -440,22 +494,45 @@ def butterfly_fig(y_true, score):
     up = up / max(up.sum(), 1)
     down = down / max(down.sum(), 1)
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=mids, y=up, name="Churned", width=0.042,
-                         marker=dict(color=up, colorscale=[[0, "#7E22CE"], [1, FUCHSIA]], cornerradius=4),
+    fig.add_trace(go.Bar(x=mids, y=up, name="Customers who churned (above the line)", width=0.042,
+                         marker=dict(color=FUCHSIA, cornerradius=4),
                          hovertemplate="Score %{x:.2f}<br>%{y:.1%} of churners<extra></extra>"))
-    fig.add_trace(go.Bar(x=mids, y=-down, name="Stayed", width=0.042,
+    fig.add_trace(go.Bar(x=mids, y=-down, name="Customers who stayed (below the line)", width=0.042,
                          marker=dict(color="rgba(124,117,152,0.45)", cornerradius=4),
                          customdata=down, hovertemplate="Score %{x:.2f}<br>%{customdata:.1%} of stayers<extra></extra>"))
     fig.add_vline(x=0.5, line_dash="dot", line_color="#B7AECF")
-    fig.add_annotation(x=0.98, y=0.95, xref="x", yref="paper", text="Churned ▲", showarrow=False,
-                       font=dict(color=FUCHSIA, size=12), xanchor="right")
-    fig.add_annotation(x=0.98, y=0.05, xref="x", yref="paper", text="Stayed ▼", showarrow=False,
-                       font=dict(color=MUTED, size=12), xanchor="right")
+    fig.add_annotation(x=0.5, y=1.0, xref="x", yref="paper", text="threshold 0.5", showarrow=False,
+                       font=dict(color=MUTED, size=11), yanchor="bottom")
     fig.update_layout(barmode="relative", bargap=0.05)
     fig.update_xaxes(title="Churn score", range=[-0.03, 1.03])
     fig.update_yaxes(title="Share of group", tickformat=".0%", zeroline=True,
                      zerolinecolor="#B7AECF")
-    return style_fig(fig, height=400, legend=False, title="Churn score by actual outcome")
+    return style_fig(fig, height=420, title="Churn score by actual outcome")
+
+
+def pr_tradeoff_fig(y_true, score, name):
+    """Precision, recall and F1 as the decision threshold moves from 0 to 1."""
+    precision, recall, thresholds = precision_recall_curve(y_true, score)
+    precision, recall = precision[:-1], recall[:-1]
+    f1 = np.where(precision + recall > 0, 2 * precision * recall / np.maximum(precision + recall, 1e-12), 0)
+    best = int(np.argmax(f1))
+    fig = go.Figure()
+    glow_line(fig, thresholds, precision, VIOLET, "Precision (flagged customers who really left)",
+              hover="Threshold %{x:.2f}<br>Precision %{y:.3f}<extra></extra>")
+    glow_line(fig, thresholds, recall, FUCHSIA, "Recall (leavers the model catches)",
+              hover="Threshold %{x:.2f}<br>Recall %{y:.3f}<extra></extra>")
+    fig.add_trace(go.Scatter(x=thresholds, y=f1, mode="lines", name="F1 (balance of both)",
+                             line=dict(color=AMBER, width=2.4, dash="dash"),
+                             hovertemplate="Threshold %{x:.2f}<br>F1 %{y:.3f}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=[thresholds[best]], y=[f1[best]], mode="markers", name="Best F1 threshold",
+                             marker=dict(size=13, color=AMBER, symbol="star", line=dict(color="#fff", width=1.5)),
+                             hovertemplate="Best F1 %{y:.3f} at threshold %{x:.2f}<extra></extra>"))
+    fig.add_vline(x=0.5, line_dash="dot", line_color="#B7AECF")
+    fig.add_annotation(x=0.5, y=1.02, yref="y", text="threshold used: 0.5", showarrow=False,
+                       font=dict(color=MUTED, size=11), yanchor="bottom")
+    fig.update_xaxes(title="Decision threshold on the churn score", range=[0, 1])
+    fig.update_yaxes(title="Score", range=[0, 1.1])
+    return style_fig(fig, height=430, title="Precision-recall trade-off")
 
 
 def flower_fig(table: pd.DataFrame, selected: str):
@@ -487,24 +564,31 @@ training_report = load_training_report()
 
 hero_slot = st.container()
 
-controls = st.container(key="controls")
-c1, c2, c3 = controls.columns([1.2, 1, 1.2], gap="large")
-with c1:
-    model_name = st.selectbox("Classifier", list(MODEL_FILES.keys()), index=1)
+with st.sidebar:
+    html(f"""<div class="sb-brand"><div class="sb-logo">📡</div>
+             <div><div class="sb-name">ChurnScope</div><div class="sb-sub">Telecom churn classifiers</div></div></div>""")
+    html('<div class="sb-step"><b>1</b>Choose a classifier</div>')
+    model_name = st.selectbox("Classifier", list(MODEL_FILES.keys()), index=1, label_visibility="collapsed")
     params = training_report.get(model_name, {}).get("best_params", {})
-    html(f'<div class="ctlnote">{MODEL_NOTES[model_name]}<br>Tuned: '
-         + ", ".join(f"{k} = {v}" for k, v in params.items()) + "</div>")
-with c2:
-    source = st.radio("Test customers", ["Bundled test_data.csv", "Upload a CSV"], index=0)
-with c3:
+    chips = "".join(f'<span class="sb-chip">{k} = {v}</span>' for k, v in params.items())
+    html(f'<div class="sb-card">{MODEL_NOTES[model_name]}<div>{chips}</div></div>')
+
+    html('<div class="sb-step"><b>2</b>Pick the test customers</div>')
+    source = st.radio("Test customers", ["Bundled test_data.csv", "Upload a CSV"], index=0,
+                      label_visibility="collapsed")
     uploaded = None
     if source == "Upload a CSV":
         uploaded = st.file_uploader("Test CSV (20 features + churn)", type=["csv"])
-    else:
-        st.download_button("Download test_data.csv", data=SAMPLE_TEST_PATH.read_bytes(),
-                           file_name="test_data.csv", mime="text/csv")
-        html('<div class="ctlnote">1,000 customers held out from training. '
-             'Download it to try the upload option.</div>')
+    st.download_button("Download sample test_data.csv", data=SAMPLE_TEST_PATH.read_bytes(),
+                       file_name="test_data.csv", mime="text/csv", width="stretch")
+
+    st.divider()
+    html('<div class="sb-step" style="margin-top:.2rem">Model colour key</div>')
+    html('<div class="sb-key">' + "".join(
+        f'<div><i style="background:{c};box-shadow:0 0 10px {c}"></i>{n}</div>' for n, c in MODEL_COLORS.items()
+    ) + "</div>")
+    html('<div class="sb-foot">The same colour is used for each model in every chart. Models were trained '
+         'once and saved; uploaded data is only scored, never used for training.</div>')
 
 # ------------------------------------------------------------- load test data
 if source == "Upload a CSV" and uploaded is None:
@@ -513,7 +597,7 @@ if source == "Upload a CSV" and uploaded is None:
         <div class="hero-wrap"><div class="hero"><div class="copy">
           <div class="live"><i></i>Waiting for test data</div>
           <div class="title">ChurnScope</div>
-          <p class="lead">Upload a CSV below and all five classifiers will score it instantly.</p>
+          <p class="lead">Upload a CSV from the sidebar and all five classifiers will score it instantly.</p>
         </div></div></div>""")
     cols = " ".join(f"<code>{c}</code>" for c in RAW_FEATURES + [TARGET_COL])
     html(f'<div class="card waiting" style="margin-top:1.2rem"><b>The CSV needs these 21 columns</b>, '
@@ -580,10 +664,12 @@ with tab_over:
         for k in METRIC_NAMES
     )
     html(f'<div class="rings">{cards}</div>')
+    explain("Each ring fills up to the score: a <b>full ring is 1.0</b> (perfect), an empty ring is 0. "
+            "The colour runs <b>violet → pink → amber</b> along the filled part. MCC is the fairest single "
+            "number here because only a small share of customers churn.")
     if np.isnan(m["AUC"]):
         st.warning("Only one class is present in this data, so AUC cannot be calculated.")
 
-    st.write("")
     left, right = st.columns([1, 1.2], gap="medium")
     with left:
         def pct(a, b):
@@ -602,31 +688,56 @@ with tab_over:
             <div class="tile fn"><div class="n">{fn}</div><div class="w">Missed churner</div><div class="p">{pct(fn, leavers)}</div></div>
             <div class="tile tp"><div class="n">{tp}</div><div class="w">Caught churner</div><div class="p">{pct(tp, leavers)}</div></div>
           </div>
+          <div class="key">
+            <span><i style="background:#E9E4F5"></i>Correct, stayed</span>
+            <span><i style="background:#FCD34D"></i>False alarm</span>
+            <span><i style="background:#FDA4AF"></i>Missed churner</span>
+            <span><i style="background:linear-gradient(140deg,#A855F7,#EC4899)"></i>Correct, churned</span>
+          </div>
         </div>""")
+        explain("Big numbers on the <b>diagonal</b> (top-left and bottom-right) are correct predictions. "
+                "The <b>rose</b> tile is the costly mistake: customers who left without being flagged.")
     with right:
         if len(np.unique(y_true)) > 1:
             st.plotly_chart(gains_fig(y_true, result["score"], model_name), width="stretch")
+            explain("If the retention team calls customers from the <b>highest churn score down</b>, the coloured "
+                    "line shows what share of all churners they reach. The further it sits above the "
+                    "<b>dotted random line</b>, the more useful the model is.")
 
     left, right = st.columns(2, gap="medium")
     with left:
         if not np.isnan(m["AUC"]):
             fpr, tpr, _ = roc_curve(y_true, result["score"])
             st.plotly_chart(roc_fig({model_name: (fpr, tpr, m["AUC"])}, model_name), width="stretch")
+            explain("A curve that hugs the <b>top-left corner</b> separates churners from loyal customers well. "
+                    "The shaded area is the <b>AUC</b>; the dotted diagonal is a coin toss (0.5).")
     with right:
-        st.plotly_chart(butterfly_fig(y_true, result["score"]), width="stretch")
+        if len(np.unique(y_true)) > 1:
+            st.plotly_chart(pr_tradeoff_fig(y_true, result["score"], model_name), width="stretch")
+            explain("Moving the threshold <b>right</b> makes the model stricter: <b>precision</b> (violet) usually "
+                    "rises while <b>recall</b> (pink) falls. The amber star marks the threshold with the best F1; "
+                    "the dotted line is the 0.5 threshold the app uses.")
 
-    section("Classification report", "Precision, recall and F1 for each class")
-    report = classification_report(
-        y_true, result["y_pred"], labels=[0, 1], target_names=["Stayed (0)", "Churned (1)"],
-        output_dict=True, zero_division=0,
-    )
-    report_df = pd.DataFrame(report).T.rename(columns={"f1-score": "f1"})
-    report_df["support"] = report_df["support"].astype(int)
-    st.dataframe(
-        report_df.style.format({"precision": "{:.3f}", "recall": "{:.3f}", "f1": "{:.3f}"})
-        .background_gradient(subset=["precision", "recall", "f1"], cmap=REPORT_CMAP, vmin=0.3, vmax=1.25),
-        width="stretch",
-    )
+    left, right = st.columns([1.1, 1], gap="medium")
+    with left:
+        st.plotly_chart(butterfly_fig(y_true, result["score"]), width="stretch")
+        explain("<b>Pink bars above</b> the line are customers who really churned; <b>grey bars below</b> are "
+                "those who stayed. A good model pushes pink to the right and grey to the left of the 0.5 line.")
+    with right:
+        section("Classification report", "Per-class precision, recall and F1")
+        report = classification_report(
+            y_true, result["y_pred"], labels=[0, 1], target_names=["Stayed (0)", "Churned (1)"],
+            output_dict=True, zero_division=0,
+        )
+        report_df = pd.DataFrame(report).T.rename(columns={"f1-score": "f1"})
+        report_df["support"] = report_df["support"].astype(int)
+        st.dataframe(
+            report_df.style.format({"precision": "{:.3f}", "recall": "{:.3f}", "f1": "{:.3f}"})
+            .background_gradient(subset=["precision", "recall", "f1"], cmap=REPORT_CMAP, vmin=0.3, vmax=1.25),
+            width="stretch",
+        )
+        explain("Darker violet cells mean higher scores. <b>Support</b> is the number of customers in each class. "
+                "The <b>Churned (1)</b> row matters most, because those are the customers the business wants to keep.")
 
 # ------------------------------------------------------------- model arena
 with tab_arena:
@@ -650,11 +761,17 @@ with tab_arena:
           <div class="num">{r["F1"]:.3f}</div><div class="num">{r["AUC"]:.3f}</div><div class="num">{r["Recall"]:.3f}</div>
         </div>""")
     html(f'<div class="card board">{"".join(rows)}</div>')
+    st.write("")
+    explain("Each bar shows the model's <b>MCC</b> in its own colour (see the colour key in the sidebar). "
+            "The highlighted row is the classifier currently selected in the sidebar.")
 
     st.write("")
     left, right = st.columns([1, 1.1], gap="medium")
     with left:
         st.plotly_chart(flower_fig(ranked, model_name), width="stretch")
+        explain("Each <b>petal</b> is one metric and its length is the score (0 at the centre, 1 at the rim). "
+                "Petals of different models are layered, so a model that reaches further out on every "
+                "petal is better all round.")
     with right:
         if len(np.unique(y_true)) > 1:
             curves = {}
@@ -662,6 +779,8 @@ with tab_arena:
                 fpr, tpr, _ = roc_curve(y_true, r["score"])
                 curves[n] = (fpr, tpr, r["metrics"]["AUC"])
             st.plotly_chart(roc_fig(curves, model_name, height=470), width="stretch")
+            explain("All five models on one ROC chart. The <b>thick line</b> is the selected model; the number "
+                    "in brackets in the legend is each model's AUC.")
 
     with st.expander("Exact values for every model and metric"):
         st.dataframe(ranked.style.format("{:.4f}"), width="stretch")
@@ -732,16 +851,24 @@ with tab_pipe:
     with right:
         calls = pd.DataFrame({"calls": df["number_customer_service_calls"].clip(upper=6), "churn": y_true})
         rate = calls.groupby("calls")["churn"].mean()
-        fig = go.Figure(go.Bar(
-            x=[f"{int(c)}{'+' if c == 6 else ''}" for c in rate.index], y=rate.values,
-            marker=dict(color=rate.values, colorscale=[[0, "#DDD0F7"], [0.5, VIOLET], [1, FUCHSIA]],
-                        line=dict(width=0), cornerradius=8),
-            text=[f"{v:.0%}" for v in rate.values], textposition="outside", textfont=dict(color=INK),
-        ))
+        labels = [f"{int(c)}{'+' if c == 6 else ''}" for c in rate.index]
+        low = rate.index < 4
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=[l for l, k in zip(labels, low) if k], y=rate.values[low], name="0-3 support calls",
+                             marker=dict(color="#D8CCF3", cornerradius=8),
+                             text=[f"{v:.0%}" for v in rate.values[low]], textposition="outside",
+                             textfont=dict(color=INK)))
+        fig.add_trace(go.Bar(x=[l for l, k in zip(labels, low) if not k], y=rate.values[~low],
+                             name="4 or more support calls", marker=dict(color=FUCHSIA, cornerradius=8),
+                             text=[f"{v:.0%}" for v in rate.values[~low]], textposition="outside",
+                             textfont=dict(color=INK)))
         fig.update_xaxes(title="Customer service calls", type="category")
         fig.update_yaxes(title="Churn rate", tickformat=".0%", range=[0, max(rate.max() * 1.25, 0.1)])
-        st.plotly_chart(style_fig(fig, height=340, legend=False,
-                                  title="Churn jumps after the 4th support call"), width="stretch")
+        fig.update_xaxes(categoryorder="array", categoryarray=labels)
+        st.plotly_chart(style_fig(fig, height=380, title="Churn jumps after the 4th support call"), width="stretch")
+        explain("Each bar is the share of customers who churned, grouped by how many times they called "
+                "customer service. From the <b>4th call</b> (pink) churn jumps from about 10% to over 40%, "
+                "which is why the pipeline adds a 4+ calls flag.")
 
     if training_report:
         with st.expander("Hold-out results recorded at training time"):

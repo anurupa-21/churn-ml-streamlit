@@ -120,15 +120,15 @@ Live app: https://anurupa-churnscope.streamlit.app
 
 Features (all required features plus extras):
 
-- **Model selection dropdown** for the five classifiers in a control panel under the header, with a short description and the tuned hyper-parameters
-- **CSV upload** of test data, or the bundled `test_data.csv`, plus a download button for the sample file
+- **Sidebar controls** – a **model selection dropdown** for the five classifiers (with a short description and the tuned hyper-parameters), test-data choice, **CSV upload**, a download button for the sample `test_data.csv`, and a colour key that maps each model to the colour used in every chart
 - **Evaluation metrics** – Accuracy, AUC, Precision, Recall, F1 and MCC as animated gradient ring gauges; the header shows the selected model's MCC and how many churners it caught or missed
-- **Confusion matrix** as four labelled outcome tiles (correctly kept, false alarm, missed churner, caught churner) and a colour-graded **classification report**
-- **Overview charts** – retention campaign reach (cumulative gains), ROC curve and a mirrored histogram of churn scores for churners vs loyal customers
+- **Confusion matrix** as four labelled, colour-keyed outcome tiles (correctly kept, false alarm, missed churner, caught churner) and a colour-graded **classification report**
+- **Overview charts** – retention campaign reach (cumulative gains), ROC curve, a **precision–recall trade-off** chart (precision, recall and F1 across decision thresholds, with the best-F1 threshold marked) and a mirrored histogram of churn scores for churners vs loyal customers
+- Every chart has a **legend** and a short plain-language "how to read" note underneath
 - **Model arena** tab – standings ranked by MCC, a polar "metric flower" comparing all five models on all six metrics, and overlaid ROC curves
 - **Customers** tab – predictions sorted by churn score with a risk band, filters (high risk, wrong predictions) and CSV download
 - **Pipeline** tab – the preprocessing steps and the churn rate by number of customer-service calls
-- Mixed dark and light theme: a dark "command deck" (animated gradient header plus controls) and a dark standings board over light content cards, with glowing Plotly charts and the Outfit typeface
+- Mixed dark and light theme: dark sidebar, animated gradient header and standings board over light content cards, with glowing Plotly charts and the Outfit typeface
 
 The uploaded CSV must contain the 20 input columns listed above and the `churn` column. The app loads the saved pipelines from `model/` and **never retrains** on uploaded data.
 
