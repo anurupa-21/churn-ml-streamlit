@@ -102,7 +102,10 @@ html, body, .stApp, .stMarkdown, button, input, select, textarea, label, p, li {
     #F7F5FC;
   background-attachment: fixed;
 }
-.block-container { padding-top: 1.4rem; padding-bottom: 4rem; max-width: 1280px; }
+html { font-size: 13px; }
+.block-container { padding-top: 2.2rem; padding-bottom: 4rem; max-width: 1440px; }
+section[data-testid="stSidebar"] { min-width: 270px !important; max-width: 270px !important; }
+section[data-testid="stSidebar"] > div { width: 270px !important; }
 [data-testid="stAppDeployButton"], [data-testid="stDecoration"] { display: none !important; }
 
 /* ---------- dark sidebar ---------- */
@@ -331,7 +334,7 @@ html(CSS)
 
 
 # ------------------------------------------------------------- visual helpers
-def ring(value: float, size: int = 96, stroke: int = 9, uid: str = "r") -> str:
+def ring(value: float, size: int = 80, stroke: int = 8, uid: str = "r") -> str:
     """Gradient ring gauge for a 0-1 score (negative MCC draws as empty)."""
     r = (size - stroke) / 2
     c = 2 * math.pi * r
@@ -365,17 +368,20 @@ def hex_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
 
 
+CHART_SCALE = 0.84  # charts are sized for a compact, 80%-zoom look at 100% browser zoom
+
+
 def style_fig(fig, height=380, legend=True, title=None):
     fig.update_layout(
-        height=height,
-        margin=dict(l=14, r=18, t=56 if title else 18, b=100 if legend else 18),
+        height=int(height * CHART_SCALE),
+        margin=dict(l=12, r=14, t=46 if title else 14, b=86 if legend else 14),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Outfit, sans-serif", color="#4B4468", size=12),
-        title=dict(text=title, x=0.02, font=dict(size=17, color=INK)) if title else None,
+        font=dict(family="Outfit, sans-serif", color="#4B4468", size=11),
+        title=dict(text=title, x=0.02, font=dict(size=14, color=INK)) if title else None,
         showlegend=legend,
         legend=dict(orientation="h", yref="container", yanchor="bottom", y=0.02, x=0.01,
-                    font=dict(size=11, color="#4B4468"), bgcolor="rgba(0,0,0,0)"),
+                    font=dict(size=10, color="#4B4468"), bgcolor="rgba(0,0,0,0)"),
         hoverlabel=dict(bgcolor="#1B1233", bordercolor=VIOLET, font=dict(color="#FFFFFF", family="Outfit")),
     )
     fig.update_xaxes(gridcolor=GRID, zeroline=False, linecolor="#DDD5EE")
@@ -480,7 +486,7 @@ def roc_fig(curves: dict, selected: str, height=400):
     fig.update_yaxes(title="True positive rate", range=[0, 1.03])
     fig = style_fig(fig, height=height, title="ROC curve")
     if len(curves) > 1:
-        fig.update_layout(margin=dict(b=130))
+        fig.update_layout(margin=dict(b=112))
     return fig
 
 
@@ -533,6 +539,46 @@ def pr_tradeoff_fig(y_true, score, name):
     fig.update_xaxes(title="Decision threshold on the churn score", range=[0, 1])
     fig.update_yaxes(title="Score", range=[0, 1.1])
     return style_fig(fig, height=430, title="Precision-recall trade-off")
+
+
+def radar_fig(table: pd.DataFrame, selected: str):
+    """Spider chart: the outline of each model across the six metrics."""
+    fig = go.Figure()
+    cats = METRIC_NAMES + [METRIC_NAMES[0]]
+    for name in table.index:
+        vals = [0 if np.isnan(table.loc[name, k]) else max(table.loc[name, k], 0) for k in METRIC_NAMES]
+        main = name == selected
+        fig.add_trace(go.Scatterpolar(
+            r=vals + [vals[0]], theta=cats, name=name, fill="toself",
+            fillcolor=hex_rgba(MODEL_COLORS[name], 0.22 if main else 0.06),
+            line=dict(color=MODEL_COLORS[name], width=3 if main else 1.6),
+            marker=dict(size=5), hovertemplate=name + "<br>%{theta}: %{r:.3f}<extra></extra>",
+        ))
+    fig.update_layout(polar=dict(
+        bgcolor="rgba(0,0,0,0)",
+        radialaxis=dict(range=[0, 1], gridcolor=GRID, linecolor=GRID, tickfont=dict(size=9, color=MUTED), angle=90),
+        angularaxis=dict(gridcolor=GRID, linecolor="#DDD5EE", tickfont=dict(size=12, color=INK), direction="clockwise"),
+    ))
+    return style_fig(fig, height=480, title="Shape of each model")
+
+
+def heatmap_fig(table: pd.DataFrame):
+    """Models x metrics grid coloured by score, with the value printed in each cell."""
+    z = table[METRIC_NAMES].values.astype(float)
+    fig = go.Figure(go.Heatmap(
+        z=z, x=METRIC_NAMES, y=list(table.index), zmin=0, zmax=1,
+        colorscale=[[0, "#FFF1F2"], [0.35, "#FBCFE8"], [0.65, "#D8B4FE"], [1, "#7C3AED"]],
+        text=[[f"{v:.3f}" for v in row] for row in z], texttemplate="%{text}",
+        textfont=dict(size=12, family="Outfit, sans-serif"),
+        hovertemplate="%{y}<br>%{x}: %{text}<extra></extra>", xgap=4, ygap=4,
+        colorbar=dict(title=dict(text="Score", font=dict(size=11)), thickness=12, len=0.85,
+                      tickvals=[0, 0.25, 0.5, 0.75, 1], tickfont=dict(size=10)),
+    ))
+    fig.update_yaxes(autorange="reversed", showgrid=False)
+    fig.update_xaxes(showgrid=False, side="top")
+    fig = style_fig(fig, height=480, legend=False, title="Every metric, every model")
+    fig.update_layout(margin=dict(t=80))
+    return fig
 
 
 def flower_fig(table: pd.DataFrame, selected: str):
@@ -647,7 +693,7 @@ with hero_slot:
         </div>
       </div>
       <div class="gauge">
-        {ring(m["MCC"], size=170, stroke=14, uid="hero")}
+        {ring(m["MCC"], size=138, stroke=12, uid="hero")}
         <div class="cap"><b>MCC</b> for {model_name}</div>
       </div>
     </div></div>
@@ -781,6 +827,19 @@ with tab_arena:
             st.plotly_chart(roc_fig(curves, model_name, height=470), width="stretch")
             explain("All five models on one ROC chart. The <b>thick line</b> is the selected model; the number "
                     "in brackets in the legend is each model's AUC.")
+
+    left, right = st.columns([1, 1.1], gap="medium")
+    with left:
+        st.plotly_chart(radar_fig(ranked, model_name), width="stretch")
+        explain("Each coloured outline is one model; the further a corner reaches towards the rim, the higher "
+                "that metric. A <b>large, round shape</b> means the model is strong on every metric, while a "
+                "dent shows a weakness (for example KNN's low recall). The <b>thick, filled</b> outline is the "
+                "selected model.")
+    with right:
+        st.plotly_chart(heatmap_fig(ranked), width="stretch")
+        explain("Rows are models (best MCC on top), columns are metrics. <b>Deep violet</b> cells are high scores "
+                "and <b>pale pink</b> cells are low; the colour bar on the right shows the scale. Read across a "
+                "row to see one model's strengths, or down a column to compare models on one metric.")
 
     with st.expander("Exact values for every model and metric"):
         st.dataframe(ranked.style.format("{:.4f}"), width="stretch")

@@ -125,10 +125,10 @@ Features (all required features plus extras):
 - **Confusion matrix** as four labelled, colour-keyed outcome tiles (correctly kept, false alarm, missed churner, caught churner) and a colour-graded **classification report**
 - **Overview charts** – retention campaign reach (cumulative gains), ROC curve, a **precision–recall trade-off** chart (precision, recall and F1 across decision thresholds, with the best-F1 threshold marked) and a mirrored histogram of churn scores for churners vs loyal customers
 - Every chart has a **legend** and a short plain-language "how to read" note underneath
-- **Model arena** tab – standings ranked by MCC, a polar "metric flower" comparing all five models on all six metrics, and overlaid ROC curves
+- **Model arena** tab – standings ranked by MCC, a polar "metric flower", overlaid ROC curves, a radar chart ("shape of each model") and a models × metrics heatmap with a colour scale
 - **Customers** tab – predictions sorted by churn score with a risk band, filters (high risk, wrong predictions) and CSV download
 - **Pipeline** tab – the preprocessing steps and the churn rate by number of customer-service calls
-- Mixed dark and light theme: dark sidebar, animated gradient header and standings board over light content cards, with glowing Plotly charts and the Outfit typeface
+- Compact layout sized to look right at 100% browser zoom; mixed dark and light theme: dark sidebar, animated gradient header and standings board over light content cards, with glowing Plotly charts and the Outfit typeface
 
 The uploaded CSV must contain the 20 input columns listed above and the `churn` column. The app loads the saved pipelines from `model/` and **never retrains** on uploaded data.
 
