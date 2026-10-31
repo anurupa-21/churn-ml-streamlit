@@ -934,5 +934,4 @@ with tab_pipe:
             ref = pd.DataFrame({n: v["test_metrics"] for n, v in training_report.items()}).T
             st.dataframe(ref.style.format("{:.4f}"), width="stretch")
 
-html('<div class="foot">ChurnScope, M.Tech AIML Machine Learning Assignment 2. '
-     'Models are loaded from disk and never retrained on uploaded data.</div>')
+html('<div class="foot"></div>')
