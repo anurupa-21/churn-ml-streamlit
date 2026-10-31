@@ -120,13 +120,15 @@ Live app: https://anurupa-churnscope.streamlit.app
 
 Features (all required features plus extras):
 
-- **CSV upload** of test data, or a one-click option to use the bundled `test_data.csv`, plus a download button for the sample file
-- **Model selection dropdown** for the five classifiers, with a short description and the tuned hyper-parameters of each model
-- **Evaluation metrics** – Accuracy, AUC, Precision, Recall, F1 and MCC, each shown as a meter with a five-bar "signal strength" indicator
-- **Confusion matrix** (counts and row percentages) and **classification report**, plus a score-distribution chart, ROC curve and precision–recall curve
-- **Leaderboard** tab – all five models ranked by MCC, a radar chart comparing them across the six metrics, a bar chart for any chosen metric, and overlaid ROC curves
-- **Customer predictions** tab – row-level predictions with filters (wrong predictions only, flagged churners) and CSV download
-- All charts are interactive (Plotly); the app uses a custom navy-and-teal theme
+- **Model selection dropdown** for the five classifiers in a control panel under the header, with a short description and the tuned hyper-parameters
+- **CSV upload** of test data, or the bundled `test_data.csv`, plus a download button for the sample file
+- **Evaluation metrics** – Accuracy, AUC, Precision, Recall, F1 and MCC as animated gradient ring gauges; the header shows the selected model's MCC and how many churners it caught or missed
+- **Confusion matrix** as four labelled outcome tiles (correctly kept, false alarm, missed churner, caught churner) and a colour-graded **classification report**
+- **Overview charts** – retention campaign reach (cumulative gains), ROC curve and a mirrored histogram of churn scores for churners vs loyal customers
+- **Model arena** tab – standings ranked by MCC, a polar "metric flower" comparing all five models on all six metrics, and overlaid ROC curves
+- **Customers** tab – predictions sorted by churn score with a risk band, filters (high risk, wrong predictions) and CSV download
+- **Pipeline** tab – the preprocessing steps and the churn rate by number of customer-service calls
+- Mixed dark and light theme: a dark "command deck" (animated gradient header plus controls) and a dark standings board over light content cards, with glowing Plotly charts and the Outfit typeface
 
 The uploaded CSV must contain the 20 input columns listed above and the `churn` column. The app loads the saved pipelines from `model/` and **never retrains** on uploaded data.
 

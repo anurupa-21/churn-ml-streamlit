@@ -1,32 +1,29 @@
 """
 ChurnScope - Streamlit front-end for the Telecom Customer Churn classifiers.
- 
+
 The app only *loads* the five pre-trained pipelines from model/ and evaluates
 them on the uploaded test CSV. No model is retrained here.
 """
- 
+
 import json
+import math
 from pathlib import Path
- 
+
 import joblib
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from matplotlib.colors import LinearSegmentedColormap
 import streamlit as st
-from sklearn.metrics import (
-    classification_report,
-    confusion_matrix,
-    precision_recall_curve,
-    roc_curve,
-)
- 
-from src.evaluation import METRIC_NAMES, compute_metrics, positive_class_scores
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve
+
+from src.evaluation import METRIC_NAMES, compute_metrics
 from src.features import RAW_FEATURES, TARGET_COL, validate_input_frame
- 
+
 APP_DIR = Path(__file__).resolve().parent
 MODEL_DIR = APP_DIR / "model"
 SAMPLE_TEST_PATH = APP_DIR / "test_data.csv"
- 
+
 MODEL_FILES = {
     "Logistic Regression": "logistic_regression.joblib",
     "Decision Tree": "decision_tree.joblib",
@@ -34,228 +31,319 @@ MODEL_FILES = {
     "Naive Bayes": "naive_bayes.joblib",
     "Support Vector Machine": "svm.joblib",
 }
- 
+
 MODEL_NOTES = {
     "Logistic Regression": "Linear baseline with balanced class weights. Catches many churners but raises more false alarms.",
-    "Decision Tree": "Depth-limited tree that learns rule-like churn patterns such as high bills combined with repeated support calls.",
+    "Decision Tree": "Depth-limited tree that learns rule-like churn patterns such as high bills plus repeated support calls.",
     "KNN": "Votes using the five most similar customers. Precise, but the loyal majority often outvotes churners.",
-    "Naive Bayes": "Gaussian model that assumes independent, normally distributed features - an assumption this data breaks.",
+    "Naive Bayes": "Gaussian model that assumes independent features - an assumption this data breaks.",
     "Support Vector Machine": "RBF-kernel margin classifier. Learns a curved boundary and keeps false alarms low.",
 }
- 
+
 METRIC_HELP = {
-    "Accuracy": "Share of all customers classified correctly",
-    "AUC": "How well scores rank churners above loyal customers",
-    "Precision": "Of customers flagged as churners, the share who really left",
-    "Recall": "Of customers who really left, the share that was flagged",
+    "Accuracy": "Customers classified correctly",
+    "AUC": "Ranks leavers above stayers",
+    "Precision": "Flagged customers who really left",
+    "Recall": "Leavers the model flagged",
     "F1": "Balance of precision and recall",
-    "MCC": "Correlation between prediction and truth, robust to class imbalance",
+    "MCC": "Agreement, fair under imbalance",
 }
- 
-# Design tokens
-INK = "#172554"
-PAPER = "#F7F9FC"
-SIGNAL = "#0D9488"
-DROP = "#E11D48"
-AMBER = "#D97706"
-SLATE = "#64748B"
-LINE = "#E2E8F0"
+
+# ------------------------------------------------------------- design tokens
+VIOLET = "#A855F7"
+FUCHSIA = "#EC4899"
+AMBER = "#F59E0B"
+INK = "#1E1537"
+MUTED = "#7C7598"
+GRID = "#EFEAF8"
+REPORT_CMAP = LinearSegmentedColormap.from_list("churnscope", ["#FFFFFF", "#E9D5FF", "#C084FC"])
+
 MODEL_COLORS = {
-    "Logistic Regression": "#6366F1",
-    "Decision Tree": SIGNAL,
-    "KNN": "#0EA5E9",
-    "Naive Bayes": "#A855F7",
+    "Decision Tree": VIOLET,
     "Support Vector Machine": AMBER,
+    "Logistic Regression": "#60A5FA",
+    "KNN": FUCHSIA,
+    "Naive Bayes": "#94A3B8",
 }
- 
+
 st.set_page_config(
     page_title="ChurnScope | Telecom Churn Classifiers",
-    page_icon="📶",
+    page_icon="📡",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
- 
-st.markdown(
-    f"""
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap');
- 
-      html, body, [class*="css"], .stMarkdown, .stText, button, input, select, textarea {{
-          font-family: 'Sora', sans-serif;
-      }}
-      .block-container {{ padding-top: 3.2rem; max-width: 1240px; }}
-      h1, h2, h3 {{ color: {INK}; letter-spacing: -0.01em; }}
- 
-      /* Sidebar */
-      section[data-testid="stSidebar"] {{
-          background: {INK};
-      }}
-      section[data-testid="stSidebar"] * {{ color: #E0E7FF; }}
-      section[data-testid="stSidebar"] [data-testid="stSelectbox"] input,
-      section[data-testid="stSidebar"] [data-testid="stSelectbox"] div,
-      section[data-testid="stSidebar"] [data-testid="stSelectbox"] svg,
-      section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {{
-          color: {INK} !important;
-          fill: {INK} !important;
-          -webkit-text-fill-color: {INK} !important;
-      }}
-      section[data-testid="stSidebar"] [data-testid="stSelectbox"] label * {{
-          color: #E0E7FF !important;
-          -webkit-text-fill-color: #E0E7FF !important;
-      }}
-      section[data-testid="stSidebar"] .stDownloadButton button {{
-          background: transparent;
-          border: 1px solid rgba(255,255,255,0.35);
-      }}
-      .side-model {{
-          border-left: 3px solid {SIGNAL};
-          padding: 0.2rem 0 0.2rem 0.75rem;
-          margin-top: 0.4rem;
-          font-size: 0.85rem;
-          line-height: 1.45;
-          opacity: 0.9;
-      }}
-      .param-chip {{
-          display: inline-block;
-          margin: 0.25rem 0.3rem 0 0;
-          padding: 0.15rem 0.55rem;
-          border-radius: 999px;
-          background: rgba(255,255,255,0.1);
-          font-size: 0.75rem;
-      }}
- 
-      /* Hero */
-      .hero {{
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-end;
-          gap: 2rem;
-          padding: 1.6rem 1.8rem;
-          border-radius: 18px;
-          background: {INK};
-          color: #fff;
-          margin-bottom: 1.2rem;
-      }}
-      .hero h1 {{
-          color: #fff;
-          font-size: 2.5rem;
-          font-weight: 700;
-          margin: 0;
-          padding: 0;
-          line-height: 1.05;
-      }}
-      .hero p {{ margin: 0.5rem 0 0 0; color: #C7D2FE; max-width: 34rem; font-size: 0.98rem; }}
-      .hero-signal {{ text-align: right; min-width: 170px; }}
-      .hero-signal .lbl {{ color: #C7D2FE; font-size: 0.8rem; }}
-      .hero-signal .val {{ font-size: 2.1rem; font-weight: 700; line-height: 1.1; }}
- 
-      /* Signal bars - the app's signature element */
-      .bars {{ display: inline-flex; align-items: flex-end; gap: 4px; height: 34px; }}
-      .bars span {{ width: 8px; border-radius: 2px; background: rgba(148,163,184,0.35); }}
-      .bars span:nth-child(1) {{ height: 20%; }}
-      .bars span:nth-child(2) {{ height: 40%; }}
-      .bars span:nth-child(3) {{ height: 60%; }}
-      .bars span:nth-child(4) {{ height: 80%; }}
-      .bars span:nth-child(5) {{ height: 100%; }}
-      .bars.small {{ height: 22px; gap: 3px; }}
-      .bars.small span {{ width: 6px; }}
- 
-      /* Dataset strip */
-      .strip {{
-          display: flex; flex-wrap: wrap; gap: 2.4rem;
-          padding: 0.2rem 0.2rem 1rem 0.2rem;
-          border-bottom: 1px solid {LINE};
-          margin-bottom: 0.6rem;
-      }}
-      .strip div b {{ display: block; font-size: 1.45rem; color: {INK}; }}
-      .strip div span {{ font-size: 0.82rem; color: {SLATE}; }}
- 
-      /* Metric meters */
-      .meters {{
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 0.8rem;
-          margin: 0.4rem 0 1.2rem 0;
-      }}
-      @media (max-width: 900px) {{ .meters {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }} }}
-      @media (max-width: 520px) {{ .meters {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
-      .meter {{
-          background: #fff;
-          border: 1px solid {LINE};
-          border-radius: 12px;
-          padding: 0.8rem 0.9rem;
-      }}
-      .meter .name {{ font-size: 0.82rem; color: {SLATE}; }}
-      .meter .row {{ display: flex; justify-content: space-between; align-items: flex-end; margin-top: 0.2rem; }}
-      .meter .num {{ font-size: 1.55rem; font-weight: 700; color: {INK}; font-variant-numeric: tabular-nums; }}
-      .meter .hint {{ font-size: 0.72rem; color: {SLATE}; margin-top: 0.35rem; line-height: 1.35; }}
- 
-      .verdict {{
-          padding: 0.9rem 1.1rem;
-          border-radius: 12px;
-          background: #F0FDFA;
-          border: 1px solid #99F6E4;
-          color: {INK};
-          margin: 0.4rem 0 1rem 0;
-      }}
- 
-      /* Tabs */
-      .stTabs [data-baseweb="tab-list"] {{ gap: 0.4rem; border-bottom: 1px solid {LINE}; }}
-      .stTabs [data-baseweb="tab"] {{
-          padding: 0.55rem 1rem;
-          border-radius: 10px 10px 0 0;
-          font-weight: 500;
-      }}
-      .stTabs [aria-selected="true"] {{ color: {SIGNAL} !important; }}
- 
-      .step {{ display: flex; gap: 0.9rem; margin: 0.7rem 0; }}
-      .step .n {{
-          flex: 0 0 30px; height: 30px; border-radius: 50%;
-          background: {INK}; color: #fff; display: flex;
-          align-items: center; justify-content: center; font-weight: 600; font-size: 0.85rem;
-      }}
-      .step .t {{ color: #334155; font-size: 0.92rem; line-height: 1.5; padding-top: 0.2rem; }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
- 
- 
-# ---------------------------------------------------------------- helpers
-def signal_bars(value: float, small: bool = False) -> str:
-    """Render a 0-1 score as five phone-signal bars."""
-    if value is None or np.isnan(value):
-        filled, color = 0, SLATE
-    else:
-        filled = int(np.clip(np.ceil(value * 5 - 1e-9), 0, 5))
-        color = SIGNAL if value >= 0.8 else AMBER if value >= 0.6 else DROP
-    spans = "".join(
-        f'<span style="background:{color}"></span>' if i < filled else "<span></span>"
-        for i in range(5)
-    )
-    return f'<div class="bars{" small" if small else ""}">{spans}</div>'
- 
- 
-def style_fig(fig, height=360, legend=True):
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+@property --spin { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes spin { to { --spin: 360deg; } }
+@keyframes draw { from { stroke-dasharray: 0 999; } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+
+:root {
+  --violet: #A855F7; --fuchsia: #EC4899; --amber: #F59E0B; --rose: #F43F5E;
+  --ink: #1E1537; --body: #4B4468; --muted: #7C7598; --line: #ECE7F6;
+  --night: #150D2B; --night-edge: rgba(255,255,255,0.10); --night-muted: #B9AEDB;
+  --grad: linear-gradient(100deg, #A855F7 0%, #EC4899 55%, #F59E0B 100%);
+  --card-shadow: 0 1px 2px rgba(30,21,55,0.04), 0 18px 40px -24px rgba(91,33,182,0.28);
+}
+html, body, .stApp, .stMarkdown, button, input, select, textarea, label, p, li { font-family: 'Outfit', system-ui, sans-serif; }
+
+/* light lavender page with soft colour blooms */
+.stApp {
+  background:
+    radial-gradient(900px 500px at 0% 0%, rgba(168,85,247,0.10), transparent 60%),
+    radial-gradient(800px 500px at 100% 30%, rgba(236,72,153,0.08), transparent 60%),
+    radial-gradient(900px 600px at 40% 100%, rgba(245,158,11,0.07), transparent 60%),
+    #F7F5FC;
+  background-attachment: fixed;
+}
+.block-container { padding-top: 1.4rem; padding-bottom: 4rem; max-width: 1280px; }
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stAppDeployButton"], [data-testid="stDecoration"] { display: none !important; }
+header[data-testid="stHeader"] { background: transparent; }
+
+/* ---------- dark command deck: hero + controls ---------- */
+.hero-wrap {
+  position: relative; border-radius: 28px 28px 0 0; padding: 1.5px 1.5px 0 1.5px;
+  background: conic-gradient(from var(--spin), #A855F7, #EC4899, #F59E0B, #A855F7 50%, rgba(168,85,247,0.2) 75%, #A855F7);
+  animation: spin 9s linear infinite;
+}
+.hero {
+  position: relative; overflow: hidden; border-radius: 27px 27px 0 0; padding: 2.2rem 2.4rem 1.8rem;
+  background:
+    radial-gradient(620px 320px at 0% 0%, rgba(168,85,247,0.40), transparent 65%),
+    radial-gradient(520px 320px at 100% 100%, rgba(236,72,153,0.30), transparent 60%),
+    var(--night);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2rem; align-items: center;
+}
+.hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(rgba(255,255,255,0.11) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse at 80% 50%, black 10%, transparent 70%);
+}
+.hero .copy { position: relative; z-index: 1; animation: rise .7s ease-out both; }
+.live { display: inline-flex; align-items: center; gap: .5rem; font-size: .82rem; color: #F5D0FE; font-weight: 500; }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: #F472B6; box-shadow: 0 0 12px #F472B6; animation: pulse 1.8s infinite; }
+.hero .title {
+  font-size: 3.6rem; font-weight: 800; line-height: 1; margin: .6rem 0 .7rem 0; letter-spacing: -0.035em;
+  background: linear-gradient(95deg, #FFFFFF 0%, #E9D5FF 40%, #F9A8D4 75%, #FCD34D 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
+}
+.hero p.lead { color: #DCD3F5; font-size: 1.05rem; line-height: 1.6; margin: 0; max-width: 36rem; }
+.kpis { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.5rem; }
+.kpi { background: rgba(255,255,255,0.07); border: 1px solid var(--night-edge); border-radius: 16px; padding: .7rem 1rem; min-width: 128px; }
+.kpi b { display: block; font-size: 1.6rem; font-weight: 700; color: #fff; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi span { font-size: .78rem; color: var(--night-muted); }
+.kpi.good b { background: linear-gradient(90deg, #D8B4FE, #F9A8D4); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.kpi.bad b { color: #FDA4AF; }
+.gauge { position: relative; z-index: 1; text-align: center; }
+.gauge svg { filter: drop-shadow(0 0 22px rgba(236,72,153,0.5)); }
+.gauge svg text { fill: #FFFFFF; }
+.gauge svg circle.track { stroke: rgba(255,255,255,0.12); }
+.gauge .cap { color: var(--night-muted); font-size: .85rem; margin-top: .3rem; }
+.gauge .cap b { color: #fff; font-weight: 600; }
+
+/* controls form the bottom half of the dark deck */
+.st-key-controls {
+  background: linear-gradient(180deg, #1D1338 0%, #241747 100%);
+  border: 1.5px solid rgba(168,85,247,0.55); border-top: 1px solid var(--night-edge);
+  border-radius: 0 0 28px 28px; padding: 1.2rem 2.4rem 1.2rem;
+  box-shadow: 0 34px 70px -34px rgba(91,33,182,0.65); margin-bottom: .6rem;
+}
+.st-key-controls label p, .st-key-controls [data-testid="stWidgetLabel"] p { color: #F5F3FF !important; font-weight: 600; }
+.st-key-controls [role="radiogroup"] p { color: #E9E4FB !important; }
+.st-key-controls .ctlnote { color: var(--night-muted); }
+.st-key-controls [data-testid="stFileUploaderDropzone"] { background: rgba(255,255,255,0.06); border: 1.5px dashed rgba(236,72,153,0.6); }
+.st-key-controls [data-testid="stFileUploaderDropzone"] span,
+.st-key-controls [data-testid="stFileUploaderDropzone"] small { color: #E9E4FB !important; }
+.ctlnote { font-size: .82rem; line-height: 1.45; margin-top: .2rem; }
+div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+div[data-testid="stSelectbox"] [role="group"] { border-radius: 12px !important; border: 1px solid rgba(168,85,247,0.5) !important; }
+.stDownloadButton button {
+  background: var(--grad) !important; color: #fff !important; border: none !important; border-radius: 12px !important;
+  font-weight: 600 !important; box-shadow: 0 10px 30px -10px rgba(236,72,153,0.7);
+}
+.stDownloadButton button p { color: #fff !important; }
+.stDownloadButton button:hover { filter: brightness(1.08); }
+
+/* ---------- light content ---------- */
+.card { background: #FFFFFF; border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--card-shadow); }
+[data-testid="stPlotlyChart"], [data-testid="stDataFrame"], [data-testid="stExpander"] {
+  background: #FFFFFF; border: 1px solid var(--line) !important; border-radius: 20px; padding: .5rem; box-shadow: var(--card-shadow);
+}
+[data-testid="stExpander"] details { border: none !important; }
+
+/* tabs as gradient pills */
+.stTabs [role="tablist"], .stTabs [data-baseweb="tab-list"] {
+  gap: .35rem; background: #FFFFFF; border: 1px solid var(--line); box-shadow: var(--card-shadow);
+  border-radius: 999px; padding: .35rem; width: fit-content; max-width: 100%; overflow-x: auto; margin-top: .8rem;
+}
+.stTabs [role="tab"] { border-radius: 999px; padding: .5rem 1.3rem !important; white-space: nowrap; }
+.stTabs [role="tab"] p { font-weight: 500; font-size: .95rem; color: var(--muted); }
+.stTabs [role="tab"][aria-selected="true"] { background: var(--grad); box-shadow: 0 8px 24px -8px rgba(236,72,153,0.7); }
+.stTabs [role="tab"][aria-selected="true"] p { color: #fff !important; font-weight: 600; }
+.stTabs .react-aria-SelectionIndicator, .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+.sec { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0 .9rem 0; }
+.sec .tt { font-size: 1.45rem; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+.sec .nt { color: var(--muted); font-size: .88rem; }
+
+/* metric rings */
+.rings { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .9rem; }
+@media (max-width: 1050px) { .rings { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .rings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero { grid-template-columns: 1fr; padding: 1.5rem; } .hero .title { font-size: 2.6rem; }
+  .st-key-controls { padding: 1rem 1.2rem; }
+}
+.ring { padding: 1.1rem .6rem 1rem; text-align: center; animation: rise .6s ease-out both; position: relative; overflow: hidden; }
+.ring::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--grad); opacity: .85; }
+.ring:nth-child(2) { animation-delay: .05s; } .ring:nth-child(3) { animation-delay: .1s; }
+.ring:nth-child(4) { animation-delay: .15s; } .ring:nth-child(5) { animation-delay: .2s; } .ring:nth-child(6) { animation-delay: .25s; }
+.ring svg { filter: drop-shadow(0 6px 14px rgba(168,85,247,0.28)); }
+svg circle.arc { animation: draw 1.2s cubic-bezier(.2,.8,.2,1) both; }
+.ring svg text { fill: var(--ink); }
+.ring svg circle.track { stroke: #F1ECFA; }
+.ring .nm { color: var(--ink); font-weight: 600; margin-top: .4rem; }
+.ring .hp { color: var(--muted); font-size: .76rem; line-height: 1.35; margin-top: .1rem; }
+
+/* confusion matrix tiles */
+.cmx { padding: 1.2rem 1.3rem; height: 100%; }
+.cmx .pt { color: var(--ink); font-weight: 600; font-size: 1.1rem; }
+.cmx .pn { color: var(--muted); font-size: .82rem; margin-bottom: .9rem; }
+.cmx .grid { display: grid; grid-template-columns: 96px 1fr 1fr; gap: 8px; }
+.cmx .ax { color: var(--muted); font-size: .78rem; display: flex; align-items: center; }
+.cmx .ax.top { justify-content: center; }
+.tile { border-radius: 16px; padding: 1rem .9rem; min-height: 118px; }
+.tile .n { font-size: 2.3rem; font-weight: 800; line-height: 1; }
+.tile .w { font-size: .85rem; font-weight: 600; margin-top: .4rem; }
+.tile .p { font-size: .76rem; opacity: .75; margin-top: .1rem; }
+.tile.tn { background: #F3F0FA; color: var(--ink); }
+.tile.fp { background: linear-gradient(140deg, #FEF3C7, #FFFBEB); color: #92400E; }
+.tile.fn { background: linear-gradient(140deg, #FFE4E6, #FFF1F2); color: #9F1239; }
+.tile.tp { background: linear-gradient(140deg, #A855F7, #EC4899); color: #fff; box-shadow: 0 14px 34px -14px rgba(236,72,153,0.8); }
+
+/* dark standings board (accent block on the light page) */
+.board {
+  padding: .5rem 1.6rem; border-radius: 22px; color: #fff;
+  background: radial-gradient(500px 220px at 100% 0%, rgba(236,72,153,0.25), transparent 60%),
+              radial-gradient(500px 220px at 0% 100%, rgba(168,85,247,0.30), transparent 60%), var(--night);
+  box-shadow: 0 30px 60px -30px rgba(91,33,182,0.6);
+}
+.row { display: grid; grid-template-columns: 44px minmax(170px, 1.2fr) minmax(170px, 2fr) repeat(3, 70px);
+       gap: .9rem; align-items: center; padding: .85rem 0; border-top: 1px solid var(--night-edge); }
+.row:first-child { border-top: none; }
+.row.hd { color: var(--night-muted); font-size: .76rem; padding: .8rem 0 .5rem; }
+.rk { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; color: #fff; background: rgba(255,255,255,0.08); }
+.row.first .rk { background: var(--grad); box-shadow: 0 8px 22px -6px rgba(236,72,153,0.8); }
+.md { color: #fff; font-weight: 600; }
+.md small { display: block; color: var(--night-muted); font-weight: 400; font-size: .75rem; margin-top: .1rem; }
+.md i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .5rem; }
+.track { height: 10px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.track div { height: 100%; border-radius: 999px; }
+.num { text-align: right; color: #fff; font-variant-numeric: tabular-nums; }
+.row.hd .num { color: var(--night-muted); }
+.row.sel { background: linear-gradient(90deg, rgba(168,85,247,0.22), transparent 70%); margin: 0 -1.6rem; padding-left: 1.6rem; padding-right: 1.6rem; }
+@media (max-width: 760px) {
+  .row { grid-template-columns: 38px 1fr 64px; }
+  .row > :nth-child(3), .row > :nth-child(5), .row > :nth-child(6) { display: none; }
+}
+
+/* pipeline */
+.flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .9rem; }
+@media (max-width: 950px) { .flow { grid-template-columns: 1fr; } }
+.step { padding: 1.1rem; }
+.step .no { font-size: 2rem; font-weight: 800; line-height: 1;
+  background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.step .ft { color: var(--ink); font-weight: 600; font-size: 1.05rem; margin: .4rem 0 .35rem; }
+.step p { color: var(--body); font-size: .85rem; line-height: 1.5; margin: 0; }
+.step p b { color: var(--ink); font-weight: 600; }
+.step.dark { background: var(--night); border: none; }
+.step.dark .ft { color: #fff; } .step.dark p { color: #DCD3F5; } .step.dark p b { color: #fff; }
+
+.waiting { padding: 1.3rem 1.5rem; color: var(--ink); margin-top: 1rem; }
+.waiting code { background: #F3E8FF; color: #6B21A8; padding: .1rem .4rem; border-radius: 6px; font-size: .78rem; }
+.foot { color: var(--muted); font-size: .8rem; text-align: center; margin-top: 3rem; }
+</style>
+"""
+
+
+def html(markup: str) -> None:
+    """Render HTML without Markdown treating indented lines as code blocks."""
+    st.markdown(" ".join(line.strip() for line in markup.splitlines()), unsafe_allow_html=True)
+
+
+html(CSS)
+
+
+# ------------------------------------------------------------- visual helpers
+def ring(value: float, size: int = 96, stroke: int = 9, uid: str = "r") -> str:
+    """Gradient ring gauge for a 0-1 score (negative MCC draws as empty)."""
+    r = (size - stroke) / 2
+    c = 2 * math.pi * r
+    frac = 0 if np.isnan(value) else float(np.clip(value, 0, 1))
+    txt = "n/a" if np.isnan(value) else f"{value:.3f}"
+    return f"""
+    <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" role="img" aria-label="{txt}">
+      <defs><linearGradient id="g{uid}" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#A855F7"/><stop offset="60%" stop-color="#EC4899"/>
+        <stop offset="100%" stop-color="#F59E0B"/></linearGradient></defs>
+      <circle class="track" cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="#F1ECFA" stroke-width="{stroke}"/>
+      <circle class="arc" cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="url(#g{uid})"
+        stroke-width="{stroke}" stroke-linecap="round" stroke-dasharray="{c * frac:.2f} {c:.2f}"
+        transform="rotate(-90 {size/2} {size/2})"/>
+      <text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-family="Outfit, sans-serif"
+        font-weight="700" font-size="{size * 0.2:.1f}">{txt}</text>
+    </svg>"""
+
+
+def section(title: str, note: str = "") -> None:
+    html(f'<div class="sec"><div class="tt">{title}</div><div class="nt">{note}</div></div>')
+
+
+def hex_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def style_fig(fig, height=380, legend=True, title=None):
     fig.update_layout(
         height=height,
-        margin=dict(l=10, r=10, t=40, b=110 if legend else 10),
+        margin=dict(l=14, r=18, t=56 if title else 18, b=100 if legend else 18),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#FFFFFF",
-        font=dict(family="Sora, sans-serif", color="#334155", size=12),
-        title_font=dict(size=14, color=INK),
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Outfit, sans-serif", color="#4B4468", size=12),
+        title=dict(text=title, x=0.02, font=dict(size=17, color=INK)) if title else None,
         showlegend=legend,
-        legend=dict(orientation="h", yanchor="top", y=-0.3, x=0),
+        legend=dict(orientation="h", yref="container", yanchor="bottom", y=0.02, x=0.01,
+                    font=dict(size=11, color="#4B4468"), bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(bgcolor="#1B1233", bordercolor=VIOLET, font=dict(color="#FFFFFF", family="Outfit")),
     )
-    fig.update_xaxes(gridcolor=LINE, zeroline=False)
-    fig.update_yaxes(gridcolor=LINE, zeroline=False)
+    fig.update_xaxes(gridcolor=GRID, zeroline=False, linecolor="#DDD5EE")
+    fig.update_yaxes(gridcolor=GRID, zeroline=False, linecolor="#DDD5EE")
     return fig
- 
- 
+
+
+def glow_line(fig, x, y, color, name, width=3.0, hover=None, opacity=1.0):
+    """Neon line: a wide faint halo trace underneath the real line."""
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", hoverinfo="skip", showlegend=False,
+                             line=dict(color=hex_rgba(color, 0.18 * opacity), width=width * 4)))
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=name, opacity=opacity,
+                             line=dict(color=color, width=width), hovertemplate=hover))
+
+
+# ------------------------------------------------------------- data + models
 @st.cache_resource(show_spinner="Loading trained models...")
 def load_models() -> dict:
     return {name: joblib.load(MODEL_DIR / fname) for name, fname in MODEL_FILES.items()}
- 
- 
+
+
 @st.cache_data
 def load_training_report() -> dict:
     path = MODEL_DIR / "metrics.json"
@@ -264,355 +352,401 @@ def load_training_report() -> dict:
     with open(path) as fh:
         raw = json.load(fh)
     return {v["display_name"]: v for v in raw.values()}
- 
- 
+
+
 @st.cache_data
 def read_csv(file) -> pd.DataFrame:
     return pd.read_csv(file)
- 
- 
+
+
 def normalise_target(series: pd.Series) -> pd.Series:
     """Accept 0/1, True/False or yes/no style churn labels."""
     if series.dtype == object or series.dtype == bool:
         mapping = {"1": 1, "0": 0, "true": 1, "false": 0, "yes": 1, "no": 0}
         series = series.astype(str).str.strip().str.lower().map(mapping)
     return series.astype(int)
- 
- 
+
+
+def churn_score(model, X) -> np.ndarray:
+    """0-1 churn score: predicted probability, or a sigmoid of the SVM margin.
+
+    The sigmoid is monotonic, so AUC and ROC are identical to using the raw margin.
+    """
+    if hasattr(model, "predict_proba"):
+        return model.predict_proba(X)[:, 1]
+    return 1.0 / (1.0 + np.exp(-model.decision_function(X)))
+
+
 def evaluate(model, X, y) -> dict:
     y_pred = model.predict(X)
-    y_score = positive_class_scores(model, X)
-    return {"y_pred": y_pred, "y_score": y_score, "metrics": compute_metrics(y, y_pred, y_score)}
- 
- 
-# ---------------------------------------------------------------- charts
-def confusion_fig(y_true, y_pred):
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    pct = cm / cm.sum(axis=1, keepdims=True).clip(min=1)
-    labels = ["Stayed", "Churned"]
-    text = [[f"<b>{cm[i, j]}</b><br>{pct[i, j]:.0%} of actual" for j in range(2)] for i in range(2)]
-    fig = go.Figure(
-        go.Heatmap(
-            z=pct, x=[f"Predicted {l.lower()}" for l in labels], y=[f"Actually {l.lower()}" for l in labels],
-            text=text, texttemplate="%{text}", textfont=dict(size=14),
-            colorscale=[[0, "#F1F5F9"], [1, SIGNAL]], showscale=False, zmin=0, zmax=1,
-            hovertemplate="%{y}, %{x}<br>%{text}<extra></extra>",
-        )
-    )
-    fig.update_yaxes(autorange="reversed")
-    return style_fig(fig, height=340, legend=False).update_layout(title="Confusion matrix")
- 
- 
-def score_distribution_fig(y_true, y_score):
-    df = pd.DataFrame({"score": y_score, "Actual": np.where(np.asarray(y_true) == 1, "Churned", "Stayed")})
+    score = churn_score(model, X)
+    return {"y_pred": y_pred, "score": score, "metrics": compute_metrics(y, y_pred, score)}
+
+
+# ------------------------------------------------------------- charts
+def gains_fig(y_true, score, name):
+    """Cumulative gains: share of churners reached when contacting the riskiest customers first."""
+    order = np.argsort(-score)
+    hits = np.cumsum(np.asarray(y_true)[order])
+    total = max(hits[-1], 1)
+    x = np.concatenate([[0], np.arange(1, len(order) + 1) / len(order)])
+    y = np.concatenate([[0], hits / total])
+    at20 = y[int(round(0.2 * len(order)))]
+    color = MODEL_COLORS[name]
     fig = go.Figure()
-    for label, color in [("Stayed", "#94A3B8"), ("Churned", DROP)]:
-        fig.add_trace(go.Histogram(x=df.loc[df.Actual == label, "score"], name=label,
-                                   marker_color=color, opacity=0.75, nbinsx=30))
-    fig.update_layout(barmode="overlay", title="How the model scores each group")
-    fig.update_xaxes(title="Model churn score")
-    fig.update_yaxes(title="Customers")
-    return style_fig(fig, height=340)
- 
- 
-def roc_fig(curves: dict, highlight=None):
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Contacting at random",
+                             line=dict(color="#B7AECF", dash="dot", width=1.5), hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", fill="tonexty", fillcolor=hex_rgba(color, 0.16),
+                             line=dict(width=0), hoverinfo="skip", showlegend=False))
+    glow_line(fig, x, y, color, name, hover="Contact top %{x:.0%}<br>Reach %{y:.0%} of churners<extra></extra>")
+    fig.add_trace(go.Scatter(x=[0.2], y=[at20], mode="markers", showlegend=False, hoverinfo="skip",
+                             marker=dict(size=13, color=FUCHSIA, line=dict(color="#fff", width=2))))
+    fig.add_annotation(x=0.2, y=at20, ax=80, ay=46, text=f"<b>Top 20%</b> → {at20:.0%} of churners",
+                       showarrow=True, arrowcolor="#F9A8D4", font=dict(size=12, color="#fff"),
+                       bgcolor="rgba(21,13,43,0.92)", bordercolor=FUCHSIA, borderpad=5)
+    fig.update_xaxes(title="Customers contacted, riskiest first", tickformat=".0%", range=[0, 1])
+    fig.update_yaxes(title="Churners reached", tickformat=".0%", range=[0, 1.04])
+    return style_fig(fig, height=400, title="Retention campaign reach")
+
+
+def roc_fig(curves: dict, selected: str, height=400):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(dash="dot", color="#CBD5E1"),
-                             name="Random guess", hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Random",
+                             line=dict(color="#B7AECF", dash="dot", width=1.5), hoverinfo="skip"))
     for name, (fpr, tpr, auc) in curves.items():
-        is_main = highlight is None or name == highlight
-        fig.add_trace(go.Scatter(
-            x=fpr, y=tpr, mode="lines", name=f"{name} ({auc:.3f})",
-            line=dict(color=MODEL_COLORS[name], width=3.2 if is_main else 1.6),
-            opacity=1 if is_main else 0.55,
-        ))
+        main = name == selected
+        if len(curves) == 1:
+            fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", fill="tozeroy",
+                                     fillcolor=hex_rgba(MODEL_COLORS[name], 0.14),
+                                     line=dict(width=0), hoverinfo="skip", showlegend=False))
+        glow_line(fig, fpr, tpr, MODEL_COLORS[name], f"{name} ({auc:.3f})",
+                  width=3.2 if main else 1.8, opacity=1 if main else 0.65,
+                  hover=name + "<br>FPR %{x:.2f}, TPR %{y:.2f}<extra></extra>")
     fig.update_xaxes(title="False positive rate", range=[0, 1])
-    fig.update_yaxes(title="True positive rate", range=[0, 1.02])
-    return style_fig(fig, height=380).update_layout(title="ROC curve")
- 
- 
-def pr_fig(y_true, y_score, name):
-    precision, recall, _ = precision_recall_curve(y_true, y_score)
-    fig = go.Figure(go.Scatter(x=recall, y=precision, mode="lines", fill="tozeroy",
-                               line=dict(color=MODEL_COLORS[name], width=2.6),
-                               fillcolor="rgba(13,148,136,0.08)", name=name))
-    fig.update_xaxes(title="Recall", range=[0, 1])
-    fig.update_yaxes(title="Precision", range=[0, 1.02])
-    return style_fig(fig, height=380, legend=False).update_layout(title="Precision vs recall trade-off")
- 
- 
-def radar_fig(table: pd.DataFrame):
+    fig.update_yaxes(title="True positive rate", range=[0, 1.03])
+    fig = style_fig(fig, height=height, title="ROC curve")
+    if len(curves) > 1:
+        fig.update_layout(margin=dict(b=130))
+    return fig
+
+
+def butterfly_fig(y_true, score):
+    """Mirrored histogram: churners above the axis, loyal customers below (share of each group)."""
+    actual = np.asarray(y_true)
+    bins = np.linspace(0, 1, 21)
+    mids = (bins[:-1] + bins[1:]) / 2
+    up, _ = np.histogram(score[actual == 1], bins=bins)
+    down, _ = np.histogram(score[actual == 0], bins=bins)
+    up = up / max(up.sum(), 1)
+    down = down / max(down.sum(), 1)
     fig = go.Figure()
-    cats = METRIC_NAMES + [METRIC_NAMES[0]]
-    for name, row in table.iterrows():
-        vals = [max(row[m], 0) if not np.isnan(row[m]) else 0 for m in METRIC_NAMES]
-        fig.add_trace(go.Scatterpolar(r=vals + [vals[0]], theta=cats, name=name,
-                                      line=dict(color=MODEL_COLORS[name], width=2), opacity=0.85))
-    fig.update_layout(polar=dict(radialaxis=dict(range=[0, 1], gridcolor=LINE, tickfont=dict(size=9)),
-                                 angularaxis=dict(gridcolor=LINE), bgcolor="#FFFFFF"),
-                      title="Model profiles across all six metrics")
-    return style_fig(fig, height=430)
- 
- 
-def metric_bar_fig(table: pd.DataFrame, metric: str, best: str):
-    data = table[metric].sort_values()
-    fig = go.Figure(go.Bar(
-        x=data.values, y=data.index, orientation="h",
-        marker_color=[MODEL_COLORS[n] if n == best else "#CBD5E1" for n in data.index],
-        text=[f"{v:.3f}" for v in data.values], textposition="outside",
-    ))
-    fig.update_xaxes(range=[min(0, data.min() - 0.05), 1.1], title=metric)
-    return style_fig(fig, height=300, legend=False).update_layout(title=f"{metric} by model")
- 
- 
-# ---------------------------------------------------------------- sidebar
+    fig.add_trace(go.Bar(x=mids, y=up, name="Churned", width=0.042,
+                         marker=dict(color=up, colorscale=[[0, "#7E22CE"], [1, FUCHSIA]], cornerradius=4),
+                         hovertemplate="Score %{x:.2f}<br>%{y:.1%} of churners<extra></extra>"))
+    fig.add_trace(go.Bar(x=mids, y=-down, name="Stayed", width=0.042,
+                         marker=dict(color="rgba(124,117,152,0.45)", cornerradius=4),
+                         customdata=down, hovertemplate="Score %{x:.2f}<br>%{customdata:.1%} of stayers<extra></extra>"))
+    fig.add_vline(x=0.5, line_dash="dot", line_color="#B7AECF")
+    fig.add_annotation(x=0.98, y=0.95, xref="x", yref="paper", text="Churned ▲", showarrow=False,
+                       font=dict(color=FUCHSIA, size=12), xanchor="right")
+    fig.add_annotation(x=0.98, y=0.05, xref="x", yref="paper", text="Stayed ▼", showarrow=False,
+                       font=dict(color=MUTED, size=12), xanchor="right")
+    fig.update_layout(barmode="relative", bargap=0.05)
+    fig.update_xaxes(title="Churn score", range=[-0.03, 1.03])
+    fig.update_yaxes(title="Share of group", tickformat=".0%", zeroline=True,
+                     zerolinecolor="#B7AECF")
+    return style_fig(fig, height=400, legend=False, title="Churn score by actual outcome")
+
+
+def flower_fig(table: pd.DataFrame, selected: str):
+    """Polar bar chart: one petal per metric, one layer of petals per model."""
+    fig = go.Figure()
+    order = table[METRIC_NAMES].clip(lower=0).fillna(0).mean(axis=1).sort_values(ascending=False).index
+    for name in order:
+        vals = [0 if np.isnan(table.loc[name, k]) else max(table.loc[name, k], 0) for k in METRIC_NAMES]
+        main = name == selected
+        fig.add_trace(go.Barpolar(
+            r=vals, theta=METRIC_NAMES, name=name,
+            marker=dict(color=hex_rgba(MODEL_COLORS[name], 0.9 if main else 0.6),
+                        line=dict(color="#FFFFFF", width=1.5)),
+            hovertemplate=name + "<br>%{theta}: %{r:.3f}<extra></extra>",
+        ))
+    fig.update_layout(
+        polar=dict(bgcolor="rgba(0,0,0,0)", barmode="overlay",
+                   radialaxis=dict(range=[0, 1], gridcolor=GRID, linecolor=GRID,
+                                   tickfont=dict(size=9, color=MUTED), angle=90),
+                   angularaxis=dict(gridcolor=GRID, linecolor="#DDD5EE",
+                                    tickfont=dict(size=13, color=INK), direction="clockwise")),
+    )
+    return style_fig(fig, height=470, title="Metric flower")
+
+
+# ------------------------------------------------------------- controls
 models = load_models()
 training_report = load_training_report()
- 
-with st.sidebar:
-    st.markdown("### 📶 ChurnScope")
-    st.caption("Pick a model and the test data to score.")
- 
+
+hero_slot = st.container()
+
+controls = st.container(key="controls")
+c1, c2, c3 = controls.columns([1.2, 1, 1.2], gap="large")
+with c1:
     model_name = st.selectbox("Classifier", list(MODEL_FILES.keys()), index=1)
-    st.markdown(f'<div class="side-model">{MODEL_NOTES[model_name]}</div>', unsafe_allow_html=True)
-    if model_name in training_report:
-        chips = "".join(
-            f'<span class="param-chip">{k} = {v}</span>'
-            for k, v in training_report[model_name]["best_params"].items()
-        )
-        st.markdown(chips, unsafe_allow_html=True)
- 
-    st.divider()
-    source = st.radio("Test data", ["Use bundled test_data.csv", "Upload my own CSV"], index=0)
+    params = training_report.get(model_name, {}).get("best_params", {})
+    html(f'<div class="ctlnote">{MODEL_NOTES[model_name]}<br>Tuned: '
+         + ", ".join(f"{k} = {v}" for k, v in params.items()) + "</div>")
+with c2:
+    source = st.radio("Test customers", ["Bundled test_data.csv", "Upload a CSV"], index=0)
+with c3:
     uploaded = None
-    if source == "Upload my own CSV":
-        uploaded = st.file_uploader("CSV with the 20 features and a churn column", type=["csv"])
-    if SAMPLE_TEST_PATH.exists():
-        st.download_button(
-            "Download sample test_data.csv",
-            data=SAMPLE_TEST_PATH.read_bytes(),
-            file_name="test_data.csv",
-            mime="text/csv",
-            width="stretch",
-        )
-    st.caption("Models were trained once and saved. Uploaded data is only scored, never used for training.")
- 
- 
-# ---------------------------------------------------------------- data
-if source == "Upload my own CSV":
-    if uploaded is None:
-        st.markdown(
-            '<div class="hero"><div><h1>ChurnScope</h1>'
-            "<p>Upload a test CSV in the sidebar to see how each model performs on it.</p></div></div>",
-            unsafe_allow_html=True,
-        )
-        st.info("Waiting for a CSV. It needs the 20 feature columns and the churn column - "
-                "download the sample file in the sidebar to see the exact format.")
-        st.stop()
+    if source == "Upload a CSV":
+        uploaded = st.file_uploader("Test CSV (20 features + churn)", type=["csv"])
+    else:
+        st.download_button("Download test_data.csv", data=SAMPLE_TEST_PATH.read_bytes(),
+                           file_name="test_data.csv", mime="text/csv")
+        html('<div class="ctlnote">1,000 customers held out from training. '
+             'Download it to try the upload option.</div>')
+
+# ------------------------------------------------------------- load test data
+if source == "Upload a CSV" and uploaded is None:
+    with hero_slot:
+        html("""
+        <div class="hero-wrap"><div class="hero"><div class="copy">
+          <div class="live"><i></i>Waiting for test data</div>
+          <div class="title">ChurnScope</div>
+          <p class="lead">Upload a CSV below and all five classifiers will score it instantly.</p>
+        </div></div></div>""")
+    cols = " ".join(f"<code>{c}</code>" for c in RAW_FEATURES + [TARGET_COL])
+    html(f'<div class="card waiting" style="margin-top:1.2rem"><b>The CSV needs these 21 columns</b>, '
+         f"the same format as test_data.csv:<br><br>{cols}</div>")
+    st.stop()
+
+if source == "Upload a CSV":
     df = read_csv(uploaded)
     source_label = uploaded.name
 else:
     df = read_csv(SAMPLE_TEST_PATH)
-    source_label = "test_data.csv (bundled hold-out split)"
- 
+    source_label = "test_data.csv"
+
 missing = validate_input_frame(df, require_target=True)
 if missing:
-    st.error(
-        "This CSV is missing required columns: "
-        + ", ".join(f"`{c}`" for c in missing)
-        + ". Download the sample file from the sidebar to see the expected format."
-    )
+    st.error("This CSV is missing required columns: " + ", ".join(f"`{c}`" for c in missing)
+             + ". Download test_data.csv to see the expected format.")
     st.stop()
- 
+
 try:
     y_true = normalise_target(df[TARGET_COL])
 except (ValueError, TypeError):
     st.error("The churn column could not be read. Use 0/1, True/False or yes/no values.")
     st.stop()
- 
+
 X = df[RAW_FEATURES]
 all_results = {name: evaluate(mdl, X, y_true) for name, mdl in models.items()}
 result = all_results[model_name]
 m = result["metrics"]
- 
-# ---------------------------------------------------------------- hero
-st.markdown(
-    f"""
-    <div class="hero">
-      <div>
-        <h1>ChurnScope</h1>
-        <p>Which telecom subscribers are about to leave? Five trained classifiers,
-        scored live on {len(df):,} customers from {source_label}.</p>
+tn, fp, fn, tp = confusion_matrix(y_true, result["y_pred"], labels=[0, 1]).ravel()
+leavers = tp + fn
+
+# ------------------------------------------------------------- hero
+with hero_slot:
+    html(f"""
+    <div class="hero-wrap"><div class="hero">
+      <div class="copy">
+        <div class="live"><i></i>Live evaluation on {len(df):,} customers from {source_label}</div>
+        <div class="title">ChurnScope</div>
+        <p class="lead">Which telecom subscribers are about to cancel? Five trained classifiers
+        compete on the same customers. You are viewing <b style="color:#fff">{model_name}</b>.</p>
+        <div class="kpis">
+          <div class="kpi"><b>{len(df):,}</b><span>customers scored</span></div>
+          <div class="kpi"><b>{leavers:,}</b><span>actually cancelled ({y_true.mean():.1%})</span></div>
+          <div class="kpi good"><b>{tp:,}</b><span>caught by the model</span></div>
+          <div class="kpi bad"><b>{fn:,}</b><span>slipped through</span></div>
+        </div>
       </div>
-      <div class="hero-signal">
-        <div class="lbl">{model_name} signal (MCC)</div>
-        <div class="val">{"n/a" if np.isnan(m["MCC"]) else f"{m['MCC']:.3f}"}</div>
-        {signal_bars(m["MCC"])}
+      <div class="gauge">
+        {ring(m["MCC"], size=170, stroke=14, uid="hero")}
+        <div class="cap"><b>MCC</b> for {model_name}</div>
       </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
- 
-st.markdown(
-    f"""
-    <div class="strip">
-      <div><b>{len(df):,}</b><span>customers scored</span></div>
-      <div><b>{int(y_true.sum()):,}</b><span>actually churned</span></div>
-      <div><b>{y_true.mean():.1%}</b><span>churn rate</span></div>
-      <div><b>{len(RAW_FEATURES)}</b><span>input features</span></div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
- 
-tab_eval, tab_compare, tab_pred, tab_about = st.tabs(
-    ["Model evaluation", "Leaderboard", "Customer predictions", "How it works"]
-)
- 
-# ---------------------------------------------------------------- tab 1
-with tab_eval:
-    st.subheader(f"{model_name} on this data")
-    meters = "".join(
-        f"""<div class="meter" title="{METRIC_HELP[k]}">
-              <div class="name">{k}</div>
-              <div class="row"><div class="num">{"n/a" if np.isnan(m[k]) else f"{m[k]:.3f}"}</div>
-              {signal_bars(m[k], small=True)}</div>
-              <div class="hint">{METRIC_HELP[k]}</div>
-            </div>"""
+    </div></div>
+    """)
+
+tab_over, tab_arena, tab_cust, tab_pipe = st.tabs(["Overview", "Model arena", "Customers", "Pipeline"])
+
+# ------------------------------------------------------------- overview
+with tab_over:
+    section(f"{model_name}: evaluation metrics", "Hover a card for its definition")
+    cards = "".join(
+        f'<div class="card ring" title="{k}: {METRIC_HELP[k]}">{ring(m[k], uid=k)}'
+        f'<div class="nm">{k}</div><div class="hp">{METRIC_HELP[k]}</div></div>'
         for k in METRIC_NAMES
     )
-    st.markdown(f'<div class="meters">{meters}</div>', unsafe_allow_html=True)
- 
+    html(f'<div class="rings">{cards}</div>')
     if np.isnan(m["AUC"]):
         st.warning("Only one class is present in this data, so AUC cannot be calculated.")
- 
-    tn, fp, fn, tp = confusion_matrix(y_true, result["y_pred"], labels=[0, 1]).ravel()
-    st.markdown(
-        f'<div class="verdict">Out of <b>{tp + fn}</b> customers who left, the model flagged '
-        f'<b>{tp}</b> and missed <b>{fn}</b>. It also raised <b>{fp}</b> false alarms on '
-        f"customers who stayed.</div>",
-        unsafe_allow_html=True,
-    )
- 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.plotly_chart(confusion_fig(y_true, result["y_pred"]), width="stretch")
-    with c2:
-        st.plotly_chart(score_distribution_fig(y_true, result["y_score"]), width="stretch")
- 
-    st.markdown("**Classification report**")
+
+    st.write("")
+    left, right = st.columns([1, 1.2], gap="medium")
+    with left:
+        def pct(a, b):
+            return f"{a / b:.0%} of this row" if b else "-"
+
+        html(f"""
+        <div class="card cmx">
+          <div class="pt">Confusion matrix</div>
+          <div class="pn">Rows are what really happened, columns are what the model said.</div>
+          <div class="grid">
+            <div></div><div class="ax top">Predicted stay</div><div class="ax top">Predicted churn</div>
+            <div class="ax">Actually stayed</div>
+            <div class="tile tn"><div class="n">{tn}</div><div class="w">Correctly kept</div><div class="p">{pct(tn, tn + fp)}</div></div>
+            <div class="tile fp"><div class="n">{fp}</div><div class="w">False alarm</div><div class="p">{pct(fp, tn + fp)}</div></div>
+            <div class="ax">Actually churned</div>
+            <div class="tile fn"><div class="n">{fn}</div><div class="w">Missed churner</div><div class="p">{pct(fn, leavers)}</div></div>
+            <div class="tile tp"><div class="n">{tp}</div><div class="w">Caught churner</div><div class="p">{pct(tp, leavers)}</div></div>
+          </div>
+        </div>""")
+    with right:
+        if len(np.unique(y_true)) > 1:
+            st.plotly_chart(gains_fig(y_true, result["score"], model_name), width="stretch")
+
+    left, right = st.columns(2, gap="medium")
+    with left:
+        if not np.isnan(m["AUC"]):
+            fpr, tpr, _ = roc_curve(y_true, result["score"])
+            st.plotly_chart(roc_fig({model_name: (fpr, tpr, m["AUC"])}, model_name), width="stretch")
+    with right:
+        st.plotly_chart(butterfly_fig(y_true, result["score"]), width="stretch")
+
+    section("Classification report", "Precision, recall and F1 for each class")
     report = classification_report(
         y_true, result["y_pred"], labels=[0, 1], target_names=["Stayed (0)", "Churned (1)"],
         output_dict=True, zero_division=0,
     )
-    report_df = pd.DataFrame(report).T
+    report_df = pd.DataFrame(report).T.rename(columns={"f1-score": "f1"})
     report_df["support"] = report_df["support"].astype(int)
     st.dataframe(
-        report_df.style.format({"precision": "{:.3f}", "recall": "{:.3f}", "f1-score": "{:.3f}"})
-        .background_gradient(subset=["f1-score"], cmap="BuGn", vmin=0, vmax=2.2),
+        report_df.style.format({"precision": "{:.3f}", "recall": "{:.3f}", "f1": "{:.3f}"})
+        .background_gradient(subset=["precision", "recall", "f1"], cmap=REPORT_CMAP, vmin=0.3, vmax=1.25),
         width="stretch",
     )
- 
-    if not np.isnan(m["AUC"]):
-        c3, c4 = st.columns(2)
-        with c3:
-            fpr, tpr, _ = roc_curve(y_true, result["y_score"])
-            st.plotly_chart(roc_fig({model_name: (fpr, tpr, m["AUC"])}), width="stretch")
-        with c4:
-            st.plotly_chart(pr_fig(y_true, result["y_score"], model_name), width="stretch")
- 
-# ---------------------------------------------------------------- tab 2
-with tab_compare:
-    table = pd.DataFrame(
-        [{"Model": n, **r["metrics"]} for n, r in all_results.items()]
-    ).set_index("Model")
+
+# ------------------------------------------------------------- model arena
+with tab_arena:
+    table = pd.DataFrame([{"Model": n, **r["metrics"]} for n, r in all_results.items()]).set_index("Model")
     ranked = table.sort_values("MCC", ascending=False)
-    best = ranked.index[0]
- 
-    st.subheader("All five models, same customers")
-    st.markdown(
-        f'<div class="verdict"><b>{best}</b> leads on this data with MCC {ranked.loc[best, "MCC"]:.3f} '
-        f'and F1 {ranked.loc[best, "F1"]:.3f}. Ranking uses MCC because only '
-        f"{y_true.mean():.0%} of customers churn, which makes accuracy misleading.</div>",
-        unsafe_allow_html=True,
-    )
- 
-    medals = ["🥇", "🥈", "🥉", "4th", "5th"]
-    shown = ranked.copy()
-    shown.index = [f"{medals[i]}  {n}" for i, n in enumerate(shown.index)]
-    st.dataframe(
-        shown.style.format("{:.4f}").background_gradient(cmap="BuGn", vmin=0, vmax=2.2),
-        width="stretch",
-    )
- 
-    c1, c2 = st.columns([1.05, 1])
-    with c1:
-        st.plotly_chart(radar_fig(table), width="stretch")
-    with c2:
-        metric_to_plot = st.segmented_control(
-            "Compare on", METRIC_NAMES, default="F1", key="cmp_metric"
-        ) or "F1"
-        st.plotly_chart(metric_bar_fig(table, metric_to_plot, best), width="stretch")
- 
-    if len(np.unique(y_true)) > 1:
-        curves = {}
-        for n, r in all_results.items():
-            fpr, tpr, _ = roc_curve(y_true, r["y_score"])
-            curves[n] = (fpr, tpr, r["metrics"]["AUC"])
-        st.plotly_chart(roc_fig(curves, highlight=best), width="stretch")
- 
-# ---------------------------------------------------------------- tab 3
-with tab_pred:
-    st.subheader(f"Customer-level predictions from {model_name}")
+    section("Standings", f"Ranked by MCC, because only {y_true.mean():.0%} of customers churn")
+    rows = ['<div class="row hd"><div></div><div>Model</div><div>MCC</div>'
+            '<div class="num">F1</div><div class="num">AUC</div><div class="num">Recall</div></div>']
+    for i, (name, r) in enumerate(ranked.iterrows(), 1):
+        w = max(r["MCC"], 0) * 100
+        c = MODEL_COLORS[name]
+        cls = " ".join(x for x in ["first" if i == 1 else "", "sel" if name == model_name else ""] if x)
+        sel_note = ", selected" if name == model_name else ""
+        rows.append(f"""
+        <div class="row {cls}">
+          <div class="rk">{i}</div>
+          <div class="md"><i style="background:{c};box-shadow:0 0 10px {c}"></i>{name}
+            <small>MCC {r["MCC"]:.3f}{sel_note}</small></div>
+          <div class="track"><div style="width:{w:.1f}%;background:linear-gradient(90deg,{hex_rgba(c, 0.45)},{c});
+            box-shadow:0 0 14px {hex_rgba(c, 0.7)}"></div></div>
+          <div class="num">{r["F1"]:.3f}</div><div class="num">{r["AUC"]:.3f}</div><div class="num">{r["Recall"]:.3f}</div>
+        </div>""")
+    html(f'<div class="card board">{"".join(rows)}</div>')
+
+    st.write("")
+    left, right = st.columns([1, 1.1], gap="medium")
+    with left:
+        st.plotly_chart(flower_fig(ranked, model_name), width="stretch")
+    with right:
+        if len(np.unique(y_true)) > 1:
+            curves = {}
+            for n, r in all_results.items():
+                fpr, tpr, _ = roc_curve(y_true, r["score"])
+                curves[n] = (fpr, tpr, r["metrics"]["AUC"])
+            st.plotly_chart(roc_fig(curves, model_name, height=470), width="stretch")
+
+    with st.expander("Exact values for every model and metric"):
+        st.dataframe(ranked.style.format("{:.4f}"), width="stretch")
+
+# ------------------------------------------------------------- customers
+with tab_cust:
+    section(f"Customer-level predictions from {model_name}", "Riskiest customers first")
+    score = result["score"]
     pred_df = df.copy()
-    pred_df.insert(0, "predicted_churn", result["y_pred"])
-    pred_df.insert(1, "result", np.where(pred_df["predicted_churn"] == y_true, "Correct", "Wrong"))
-    view = st.segmented_control(
-        "Show", ["All customers", "Wrong predictions", "Flagged as churners"],
-        default="All customers", key="pred_view",
-    ) or "All customers"
-    if view == "Wrong predictions":
-        pred_df = pred_df[pred_df["result"] == "Wrong"]
-    elif view == "Flagged as churners":
-        pred_df = pred_df[pred_df["predicted_churn"] == 1]
-    st.caption(f"{len(pred_df):,} rows")
- 
-    def color_result(v):
-        return f"color: {SIGNAL}; font-weight: 600" if v == "Correct" else f"color: {DROP}; font-weight: 600"
- 
-    st.dataframe(pred_df.style.map(color_result, subset=["result"]), width="stretch", height=430)
+    pred_df.insert(0, "risk", np.select([score >= 0.7, score >= 0.3], ["🔴 High", "🟠 Medium"], "🟢 Low"))
+    pred_df.insert(1, "churn_score_pct", np.round(score * 100, 1))
+    pred_df.insert(2, "predicted_churn", result["y_pred"])
+    pred_df.insert(3, "correct", result["y_pred"] == y_true.to_numpy())
+    pred_df = pred_df.sort_values("churn_score_pct", ascending=False)
+
+    view = st.radio("Show", ["All customers", "High risk only", "Wrong predictions only"],
+                    horizontal=True, label_visibility="collapsed")
+    if view == "High risk only":
+        pred_df = pred_df[pred_df["risk"].str.contains("High")]
+    elif view == "Wrong predictions only":
+        pred_df = pred_df[~pred_df["correct"]]
+
+    st.dataframe(
+        pred_df, width="stretch", height=460, hide_index=True,
+        column_config={
+            "risk": st.column_config.TextColumn("Risk"),
+            "churn_score_pct": st.column_config.NumberColumn(
+                "Churn score", format="%.1f%%",
+                help="Predicted probability of churn (SVM: sigmoid of the decision margin)"),
+            "predicted_churn": st.column_config.NumberColumn("Predicted"),
+            "correct": st.column_config.CheckboxColumn("Correct"),
+            "churn": st.column_config.NumberColumn("Actual"),
+        },
+    )
     st.download_button(
-        "Download these predictions",
+        f"Download {len(pred_df):,} rows as CSV",
         pred_df.to_csv(index=False).encode(),
         file_name=f"predictions_{model_name.lower().replace(' ', '_')}.csv",
         mime="text/csv",
     )
- 
-# ---------------------------------------------------------------- tab 4
-with tab_about:
-    st.subheader("From raw customer record to churn prediction")
+
+# ------------------------------------------------------------- pipeline
+with tab_pipe:
+    section("From customer record to churn prediction", "The same pipeline runs inside every saved model")
     steps = [
-        "The <b>phone_number</b> identifier is dropped - it says nothing about behaviour.",
-        "The four <b>charge</b> columns are just minutes times a fixed tariff, so they are replaced "
-        "by one <b>total_charge</b>. New features: <b>total_calls</b>, <b>intl_minutes_per_call</b> "
-        "and a <b>high_service_calls</b> flag for 4 or more support calls, where churn jumps from about 11% to 44%.",
-        "<b>state</b> and <b>area_code</b> are one-hot encoded and every numeric column is standardised.",
-        "Each classifier is tuned with 5-fold stratified cross-validation on F1, using 80% of the data.",
-        "The fitted pipelines are saved with joblib. This app loads them and scores the uploaded "
-        "test data without any retraining.",
+        ("Clean", "Drop the <b>phone_number</b> identifier; it says nothing about behaviour."),
+        ("Engineer", "Replace the four collinear charge columns with <b>total_charge</b>; add "
+                     "<b>total_calls</b>, <b>intl_minutes_per_call</b> and a <b>4+ support calls</b> flag."),
+        ("Encode", "One-hot encode <b>state</b> and <b>area_code</b>; standardise every numeric column."),
+        ("Tune", "Grid search with 5-fold stratified cross-validation on F1, using 80% of the data."),
+        ("Score", "Saved pipelines are loaded here and score your test data. Nothing is retrained."),
     ]
-    st.markdown(
-        "".join(f'<div class="step"><div class="n">{i}</div><div class="t">{s}</div></div>'
-                for i, s in enumerate(steps, 1)),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "**Dataset:** Telecom Customer Churn - 5,000 subscribers, 20 input features, "
-        "binary target `churn` (14.1% churners)."
-    )
+    html('<div class="flow">' + "".join(
+        f'<div class="card step"><div class="no">0{i}</div><div class="ft">{t}</div><p>{d}</p></div>'
+        for i, (t, d) in enumerate(steps, 1)) + "</div>")
+
+    st.write("")
+    left, right = st.columns([1, 1.2], gap="medium")
+    with left:
+        html("""
+        <div class="card step dark" style="padding:1.4rem">
+          <div class="ft">Dataset</div>
+          <p>Telecom Customer Churn: <b>5,000</b> subscribers and <b>20</b> input features covering plans,
+          day / evening / night / international usage and support calls. Target <b>churn</b> marks the
+          <b>14.1%</b> who cancelled. An 80 / 20 stratified split produced the 1,000-row
+          <b>test_data.csv</b> used here.</p>
+        </div>""")
+    with right:
+        calls = pd.DataFrame({"calls": df["number_customer_service_calls"].clip(upper=6), "churn": y_true})
+        rate = calls.groupby("calls")["churn"].mean()
+        fig = go.Figure(go.Bar(
+            x=[f"{int(c)}{'+' if c == 6 else ''}" for c in rate.index], y=rate.values,
+            marker=dict(color=rate.values, colorscale=[[0, "#DDD0F7"], [0.5, VIOLET], [1, FUCHSIA]],
+                        line=dict(width=0), cornerradius=8),
+            text=[f"{v:.0%}" for v in rate.values], textposition="outside", textfont=dict(color=INK),
+        ))
+        fig.update_xaxes(title="Customer service calls", type="category")
+        fig.update_yaxes(title="Churn rate", tickformat=".0%", range=[0, max(rate.max() * 1.25, 0.1)])
+        st.plotly_chart(style_fig(fig, height=340, legend=False,
+                                  title="Churn jumps after the 4th support call"), width="stretch")
+
     if training_report:
-        st.markdown("**Hold-out results recorded at training time**")
-        ref = pd.DataFrame({n: v["test_metrics"] for n, v in training_report.items()}).T
-        st.dataframe(ref.style.format("{:.4f}"), width="stretch")
- 
+        with st.expander("Hold-out results recorded at training time"):
+            ref = pd.DataFrame({n: v["test_metrics"] for n, v in training_report.items()}).T
+            st.dataframe(ref.style.format("{:.4f}"), width="stretch")
+
+html('<div class="foot">ChurnScope, M.Tech AIML Machine Learning Assignment 2. '
+     'Models are loaded from disk and never retrained on uploaded data.</div>')
